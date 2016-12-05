@@ -48,20 +48,19 @@ set_predicate_enable(struct brw_context *brw,
 }
 
 static void
-set_predicate_for_result(struct brw_context *brw,
-                         struct brw_query_object *query,
-                         bool inverted)
+set_predicate_for_overflow_query(struct brw_context *brw,
+                                 struct brw_query_object *query,
+                                 int stream_start, int count)
 {
-   int load_op;
+   hsw_overflow_result_to_gpr0(brw, query, count);
+   brw_load_register_reg64(brw, HSW_CS_GPR(0), MI_PREDICATE_SRC0);
+   brw_load_register_imm64(brw, MI_PREDICATE_SRC1, 0ull);
+}
 
-   assert(query->bo != NULL);
-
-   /* Needed to ensure the memory is coherent for the MI_LOAD_REGISTER_MEM
-    * command when loading the values into the predicate source registers for
-    * conditional rendering.
-    */
-   brw_emit_pipe_control_flush(brw, PIPE_CONTROL_FLUSH_ENABLE);
-
+static void
+set_predicate_for_occlusion_query(struct brw_context *brw,
+                                  struct brw_query_object *query)
+{
    brw_load_register_mem64(brw,
                            MI_PREDICATE_SRC0,
                            query->bo,
@@ -74,6 +73,34 @@ set_predicate_for_result(struct brw_context *brw,
                            I915_GEM_DOMAIN_INSTRUCTION,
                            0, /* write domain */
                            8 /* offset */);
+}
+
+static void
+set_predicate_for_result(struct brw_context *brw,
+                         struct brw_query_object *query,
+                         bool inverted)
+{
+
+   int load_op;
+
+   assert(query->bo != NULL);
+
+   /* Needed to ensure the memory is coherent for the MI_LOAD_REGISTER_MEM
+    * command when loading the values into the predicate source registers for
+    * conditional rendering.
+    */
+   brw_emit_pipe_control_flush(brw, PIPE_CONTROL_FLUSH_ENABLE);
+
+   switch (query->Base.Target) {
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      set_predicate_for_overflow_query(brw, query, 0, 1);
+      break;
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      set_predicate_for_overflow_query(brw, query, 0, MAX_VERTEX_STREAMS);
+      break;
+   default:
+      set_predicate_for_occlusion_query(brw, query);
+   }
 
    if (inverted)
       load_op = MI_PREDICATE_LOADOP_LOAD;
@@ -100,6 +127,11 @@ brw_begin_conditional_render(struct gl_context *ctx,
    bool inverted;
 
    if (!brw->predicate.supported)
+      return;
+
+   if ((brw->ctx.Query.Target == GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB ||
+        brw->ctx.Query.Target == GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB) &&
+       !can_do_mi_math_and_lrr(brw->screen))
       return;
 
    switch (mode) {
@@ -152,12 +184,17 @@ bool
 brw_check_conditional_render(struct brw_context *brw)
 {
    if (brw->predicate.supported) {
-      /* In some cases it is possible to determine that the primitives should
-       * be skipped without needing the predicate enable bit and still without
-       * stalling.
-       */
-      return brw->predicate.state != BRW_PREDICATE_STATE_DONT_RENDER;
-   } else if (brw->ctx.Query.CondRenderQuery) {
+      if ((brw->ctx.Query.Target != GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB &&
+           brw->ctx.Query.Target != GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB)
+          || can_do_mi_math_and_lrr(brw->screen))
+         /* In some cases it is possible to determine that the primitives should
+          * be skipped without needing the predicate enable bit and still
+          * without stalling.
+          */
+         return brw->predicate.state != BRW_PREDICATE_STATE_DONT_RENDER;
+   }
+
+   if (brw->ctx.Query.CondRenderQuery) {
       perf_debug("Conditional rendering is implemented in software and may "
                  "stall.\n");
       return _mesa_check_conditional_render(&brw->ctx);
