@@ -98,6 +98,39 @@ write_xfb_primitives_written(struct brw_context *brw,
    }
 }
 
+static void
+write_xfb_overflow_streams(struct gl_context *ctx,
+                           drm_intel_bo *bo, int stream, int count,
+                           int idx)
+{
+   struct brw_context *brw = brw_context(ctx);
+
+   for (int i = 0; i < count; i++) {
+      write_xfb_primitives_written(brw, bo, stream + i, 4 * i + 0 + idx);
+      write_primitives_generated(brw, bo, stream + i, 4 * i + 2 + idx);
+   }
+
+   if (stream == 0)
+      ctx->NewDriverState |= BRW_NEW_RASTERIZER_DISCARD;
+}
+
+static bool
+check_xfb_overflow_streams(uint64_t *results, int count)
+{
+   bool overflow = false;
+
+   for (int i = 0; i < count; i++) {
+      uint64_t *result_i = &results[4 * i];
+
+      if ((result_i[3] - result_i[2]) != (result_i[1] - result_i[0])) {
+         overflow = true;
+         break;
+      }
+   }
+
+   return overflow;
+}
+
 static inline int
 pipeline_target_to_index(int target)
 {
@@ -225,6 +258,14 @@ gen6_queryobj_get_results(struct gl_context *ctx,
       query->Base.Result = results[1] - results[0];
       break;
 
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      query->Base.Result = check_xfb_overflow_streams(results, 1);
+      break;
+
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      query->Base.Result = check_xfb_overflow_streams(results, MAX_VERTEX_STREAMS);
+      break;
+
    case GL_FRAGMENT_SHADER_INVOCATIONS_ARB:
       query->Base.Result = (results[1] - results[0]);
       /* Implement the "WaDividePSInvocationCountBy4:HSW,BDW" workaround:
@@ -314,6 +355,14 @@ gen6_begin_query(struct gl_context *ctx, struct gl_query_object *q)
       write_xfb_primitives_written(brw, query->bo, query->Base.Stream, 0);
       break;
 
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      write_xfb_overflow_streams(ctx, query->bo, query->Base.Stream, 1, 0);
+      break;
+
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      write_xfb_overflow_streams(ctx, query->bo, 0, MAX_VERTEX_STREAMS, 0);
+      break;
+
    case GL_VERTICES_SUBMITTED_ARB:
    case GL_PRIMITIVES_SUBMITTED_ARB:
    case GL_VERTEX_SHADER_INVOCATIONS_ARB:
@@ -368,6 +417,15 @@ gen6_end_query(struct gl_context *ctx, struct gl_query_object *q)
       write_xfb_primitives_written(brw, query->bo, query->Base.Stream, 1);
       break;
 
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      write_xfb_overflow_streams(ctx, query->bo, query->Base.Stream, 1, 1);
+      break;
+
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      write_xfb_overflow_streams(ctx, query->bo, 0, MAX_VERTEX_STREAMS, 1);
+      break;
+
+      /* calculate overflow here */
    case GL_VERTICES_SUBMITTED_ARB:
    case GL_PRIMITIVES_SUBMITTED_ARB:
    case GL_VERTEX_SHADER_INVOCATIONS_ARB:

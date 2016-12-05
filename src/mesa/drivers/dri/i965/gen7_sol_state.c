@@ -243,11 +243,14 @@ upload_3dstate_streamout(struct brw_context *brw, bool active,
 
       /* BRW_NEW_RASTERIZER_DISCARD */
       if (ctx->RasterDiscard) {
-         if (!query_active(ctx->Query.PrimitivesGenerated[0])) {
+         if (!query_active(ctx->Query.PrimitivesGenerated[0]) &&
+             !query_active(ctx->Query.TransformFeedbackOverflow[0]) &&
+             !query_active(ctx->Query.TransformFeedbackOverflowAny)) {
             dw1 |= SO_RENDERING_DISABLE;
          } else {
-            perf_debug("Rasterizer discard with a GL_PRIMITIVES_GENERATED "
-                       "query active relies on the clipper.");
+            perf_debug("Rasterizer discard with a GL_PRIMITIVES_GENERATED or "
+                       "GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB query "
+                       "active relies on the clipper.");
          }
       }
 
