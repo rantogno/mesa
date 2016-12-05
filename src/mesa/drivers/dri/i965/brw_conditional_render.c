@@ -48,20 +48,83 @@ set_predicate_enable(struct brw_context *brw,
 }
 
 static void
-set_predicate_for_result(struct brw_context *brw,
-                         struct brw_query_object *query,
-                         bool inverted)
+set_predicate_for_overflow_query(struct brw_context *brw,
+                                 struct brw_query_object *query,
+                                 int stream_start, int count)
 {
-   int load_op;
-
-   assert(query->bo != NULL);
-
-   /* Needed to ensure the memory is coherent for the MI_LOAD_REGISTER_MEM
-    * command when loading the values into the predicate source registers for
-    * conditional rendering.
+   /* R3 = R4 - R3; generated vertices
+    * R1 = R2 - R1; written vertices
+    * R1 = R3 - R1; there was an overflow on this stream
+    * R0 = R0 | R1; accumulate whether there was any overflow
     */
-   brw_emit_pipe_control_flush(brw, PIPE_CONTROL_FLUSH_ENABLE);
+   static const uint32_t maths[] = {
+      MI_MATH_ALU2(LOAD, SRCA, R4),
+      MI_MATH_ALU2(LOAD, SRCB, R3),
+      MI_MATH_ALU0(SUB),
+      MI_MATH_ALU2(STORE, R3, ACCU),
+      MI_MATH_ALU2(LOAD, SRCA, R2),
+      MI_MATH_ALU2(LOAD, SRCB, R1),
+      MI_MATH_ALU0(SUB),
+      MI_MATH_ALU2(STORE, R1, ACCU),
+      MI_MATH_ALU2(LOAD, SRCA, R3),
+      MI_MATH_ALU2(LOAD, SRCB, R1),
+      MI_MATH_ALU0(SUB),
+      MI_MATH_ALU2(STORE, R1, ACCU),
+      MI_MATH_ALU2(LOAD, SRCA, R1),
+      MI_MATH_ALU2(LOAD, SRCB, R0),
+      MI_MATH_ALU0(OR),
+      MI_MATH_ALU2(STORE, R0, ACCU),
+   };
 
+   brw_load_register_imm64(brw, HSW_CS_GPR(0), 0ull);
+
+   for (int i = stream_start; i < stream_start + count; i++) {
+      int offset = 32 * i;
+      brw_load_register_mem64(brw,
+                              HSW_CS_GPR(1),
+                              query->bo,
+                              I915_GEM_DOMAIN_INSTRUCTION,
+                              0, /* write domain */
+                              offset);
+      offset += 8;
+      brw_load_register_mem64(brw,
+                              HSW_CS_GPR(2),
+                              query->bo,
+                              I915_GEM_DOMAIN_INSTRUCTION,
+                              0, /* write domain */
+                              offset);
+      offset += 8;
+      brw_load_register_mem64(brw,
+                              HSW_CS_GPR(3),
+                              query->bo,
+                              I915_GEM_DOMAIN_INSTRUCTION,
+                              0, /* write domain */
+                              offset);
+      offset += 8;
+      brw_load_register_mem64(brw,
+                              HSW_CS_GPR(4),
+                              query->bo,
+                              I915_GEM_DOMAIN_INSTRUCTION,
+                              0, /* write domain */
+                              offset);
+
+      BEGIN_BATCH(1 + ARRAY_SIZE(maths));
+      OUT_BATCH(HSW_MI_MATH | (1 + ARRAY_SIZE(maths) - 2));
+
+      for (int m = 0; m < ARRAY_SIZE(maths); m++)
+         OUT_BATCH(maths[m]);
+
+      ADVANCE_BATCH();
+   }
+
+   brw_load_register_reg64(brw, HSW_CS_GPR(0), MI_PREDICATE_SRC0);
+   brw_load_register_imm64(brw, MI_PREDICATE_SRC1, 0ull);
+}
+
+static void
+set_predicate_for_occlusion_query(struct brw_context *brw,
+                                  struct brw_query_object *query)
+{
    brw_load_register_mem64(brw,
                            MI_PREDICATE_SRC0,
                            query->bo,
@@ -74,6 +137,34 @@ set_predicate_for_result(struct brw_context *brw,
                            I915_GEM_DOMAIN_INSTRUCTION,
                            0, /* write domain */
                            8 /* offset */);
+}
+
+static void
+set_predicate_for_result(struct brw_context *brw,
+                         struct brw_query_object *query,
+                         bool inverted)
+{
+
+   int load_op;
+
+   assert(query->bo != NULL);
+
+   /* Needed to ensure the memory is coherent for the MI_LOAD_REGISTER_MEM
+    * command when loading the values into the predicate source registers for
+    * conditional rendering.
+    */
+   brw_emit_pipe_control_flush(brw, PIPE_CONTROL_FLUSH_ENABLE);
+
+   switch (query->Base.Target) {
+   case GL_TRANSFORM_FEEDBACK_STREAM_OVERFLOW_ARB:
+      set_predicate_for_overflow_query(brw, query, 0, 1);
+      break;
+   case GL_TRANSFORM_FEEDBACK_OVERFLOW_ARB:
+      set_predicate_for_overflow_query(brw, query, 0, MAX_VERTEX_STREAMS);
+      break;
+   default:
+      set_predicate_for_occlusion_query(brw, query);
+   }
 
    if (inverted)
       load_op = MI_PREDICATE_LOADOP_LOAD;
