@@ -406,6 +406,7 @@ intelInitExtensions(struct gl_context *ctx)
       ctx->Extensions.OES_geometry_shader = true;
       ctx->Extensions.OES_texture_cube_map_array = true;
       ctx->Extensions.OES_viewport_array = true;
+      brw->predicate.supported = true;
    }
 
    if (brw->gen >= 9) {
