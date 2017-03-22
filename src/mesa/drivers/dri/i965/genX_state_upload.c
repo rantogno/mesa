@@ -27,6 +27,9 @@
 #include "genxml/gen_macros.h"
 
 #include "brw_context.h"
+#if GEN_GEN < 7
+#include "brw_defines.h"
+#endif
 #include "brw_state.h"
 #include "brw_wm.h"
 #include "brw_util.h"
@@ -1763,6 +1766,107 @@ const struct brw_tracked_state genX(ps_extra) = {
 
 /* ---------------------------------------------------------------------- */
 
+#define INIT_THREAD_DISPATCH_FIELDS(pkt, prefix) \
+   pkt.KernelStartPointer = stage_state->prog_offset;                     \
+   pkt.SamplerCount       =                                               \
+      DIV_ROUND_UP(CLAMP(stage_state->sampler_count, 0, 16), 4);          \
+   pkt.BindingTableEntryCount =                                           \
+      stage_prog_data->binding_table.size_bytes / 4;                      \
+   pkt.FloatingPointMode  = stage_prog_data->use_alt_mode;                \
+                                                                          \
+   if (stage_prog_data->total_scratch) {                                  \
+      pkt.ScratchSpaceBasePointer = (struct brw_address) {                \
+         .bo = stage_state->scratch_bo,                                   \
+         .offset = 0,                                                     \
+         .read_domains = I915_GEM_DOMAIN_RENDER,                          \
+         .write_domain = I915_GEM_DOMAIN_RENDER,                          \
+      };                                                                  \
+      pkt.PerThreadScratchSpace =                                         \
+         ffs(stage_state->per_thread_scratch) - 11;                       \
+   }                                                                      \
+                                                                          \
+   pkt.DispatchGRFStartRegisterForURBData =                               \
+      stage_prog_data->dispatch_grf_start_reg;                            \
+   pkt.prefix##URBEntryReadLength = vue_prog_data->urb_read_length;       \
+   pkt.prefix##URBEntryReadOffset = 0;                                    \
+                                                                          \
+   pkt.StatisticsEnable = true;                                           \
+   pkt.Enable           = true;
+
+
+static void
+genX(upload_vs_state)(struct brw_context *brw)
+{
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+   const struct brw_stage_state *stage_state = &brw->vs.base;
+
+   /* BRW_NEW_VS_PROG_DATA */
+   const struct brw_vue_prog_data *vue_prog_data =
+      brw_vue_prog_data(brw->vs.base.prog_data);
+   const struct brw_stage_prog_data *stage_prog_data = &vue_prog_data->base;
+
+#if GEN_GEN >= 8
+   /* _NEW_TRANSFORM */
+   struct gl_context *ctx = &brw->ctx;
+   const struct gl_transform_attrib *transform = &ctx->Transform;
+#endif
+
+   assert(vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8 ||
+          vue_prog_data->dispatch_mode == DISPATCH_MODE_4X2_DUAL_OBJECT);
+
+#if GEN_GEN < 7
+   brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_VS), cvs) {
+      if (stage_state->push_const_size != 0) {
+         cvs.Buffer0Valid = true;
+         cvs.PointertoVSConstantBuffer0 = stage_state->push_const_offset;
+         cvs.VSConstantBuffer0ReadLength = stage_state->push_const_size - 1;
+      }
+   }
+#endif
+
+   if (devinfo->is_ivybridge)
+      gen7_emit_vs_workaround_flush(brw);
+
+   brw_batch_emit(brw, GENX(3DSTATE_VS), vs) {
+      INIT_THREAD_DISPATCH_FIELDS(vs, Vertex);
+
+      vs.MaximumNumberofThreads = devinfo->max_vs_threads - 1;
+
+#if GEN_GEN >= 8
+      vs.SIMD8DispatchEnable =
+         vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8;
+
+      vs.UserClipDistanceClipTestEnableBitmask = transform->ClipPlanesEnabled;
+      vs.UserClipDistanceCullTestEnableBitmask =
+         vue_prog_data->cull_distance_mask;
+#endif
+   }
+
+#if GEN_GEN < 7
+   brw_emit_pipe_control_flush(brw,
+                               PIPE_CONTROL_DEPTH_STALL |
+                               PIPE_CONTROL_INSTRUCTION_INVALIDATE |
+                               PIPE_CONTROL_STATE_CACHE_INVALIDATE);
+#endif
+}
+
+static const struct brw_tracked_state genX(vs_state) = {
+   .dirty = {
+      .mesa  = _NEW_TRANSFORM |
+               (GEN_GEN < 7 ? _NEW_PROGRAM_CONSTANTS : 0),
+      .brw   = BRW_NEW_BATCH |
+               BRW_NEW_BLORP |
+               BRW_NEW_CONTEXT |
+               BRW_NEW_VS_PROG_DATA |
+               (GEN_GEN < 7 ? BRW_NEW_PUSH_CONSTANT_ALLOCATION |
+                              BRW_NEW_VERTEX_PROGRAM
+                            : 0),
+   },
+   .emit = genX(upload_vs_state),
+};
+
+/* ---------------------------------------------------------------------- */
+
 void
 genX(init_atoms)(struct brw_context *brw)
 {
@@ -1808,7 +1912,7 @@ genX(init_atoms)(struct brw_context *brw)
       &gen6_sampler_state,
       &gen6_multisample_state,
 
-      &gen6_vs_state,
+      &genX(vs_state),
       &gen6_gs_state,
       &genX(clip_state),
       &genX(sf_state),
@@ -1892,7 +1996,7 @@ genX(init_atoms)(struct brw_context *brw)
       &brw_gs_samplers,
       &gen6_multisample_state,
 
-      &gen7_vs_state,
+      &genX(vs_state),
       &gen7_hs_state,
       &gen7_te_state,
       &gen7_ds_state,
@@ -1979,7 +2083,7 @@ genX(init_atoms)(struct brw_context *brw)
       &brw_gs_samplers,
       &gen8_multisample_state,
 
-      &gen8_vs_state,
+      &genX(vs_state),
       &gen8_hs_state,
       &gen7_te_state,
       &gen8_ds_state,
