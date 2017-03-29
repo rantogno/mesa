@@ -2548,6 +2548,44 @@ static const struct brw_tracked_state genX(ps_blend) = {
 
 /* ---------------------------------------------------------------------- */
 
+#if GEN_GEN >= 7
+static void
+upload_te_state(struct brw_context *brw)
+{
+   /* BRW_NEW_TESS_PROGRAMS */
+   bool active = brw->tess_eval_program;
+
+   const struct brw_tes_prog_data *tes_prog_data =
+      brw_tes_prog_data(brw->tes.base.prog_data);
+
+   if (active) {
+      brw_batch_emit(brw, GENX(3DSTATE_TE), te) {
+         te.Partitioning = tes_prog_data->partitioning;
+         te.OutputTopology = tes_prog_data->output_topology;
+         te.TEDomain = tes_prog_data->domain;
+         te.TEEnable = true;
+         te.MaximumTessellationFactorOdd = 63.0;
+         te.MaximumTessellationFactorNotOdd = 64.0;
+      }
+   } else {
+      brw_batch_emit(brw, GENX(3DSTATE_TE), te);
+   }
+}
+
+static const struct brw_tracked_state genX(te_state) = {
+   .dirty = {
+      .mesa  = 0,
+      .brw   = BRW_NEW_BLORP |
+               BRW_NEW_CONTEXT |
+               BRW_NEW_TES_PROG_DATA |
+               BRW_NEW_TESS_PROGRAMS,
+   },
+   .emit = upload_te_state,
+};
+#endif
+
+/* ---------------------------------------------------------------------- */
+
 void
 genX(init_atoms)(struct brw_context *brw)
 {
@@ -2679,7 +2717,7 @@ genX(init_atoms)(struct brw_context *brw)
 
       &genX(vs_state),
       &genX(hs_state),
-      &gen7_te_state,
+      &genX(te_state),
       &genX(ds_state),
       &genX(gs_state),
       &genX(sol_state),
@@ -2766,7 +2804,7 @@ genX(init_atoms)(struct brw_context *brw)
 
       &genX(vs_state),
       &genX(hs_state),
-      &gen7_te_state,
+      &genX(te_state),
       &genX(ds_state),
       &genX(gs_state),
       &genX(sol_state),
