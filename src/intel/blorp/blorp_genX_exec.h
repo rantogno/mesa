@@ -902,23 +902,30 @@ blorp_emit_blend_state(struct blorp_batch *batch,
    struct GENX(BLEND_STATE) blend;
    memset(&blend, 0, sizeof(blend));
 
-   for (unsigned i = 0; i < params->num_draw_buffers; ++i) {
-      blend.Entry[i].PreBlendColorClampEnable = true;
-      blend.Entry[i].PostBlendColorClampEnable = true;
-      blend.Entry[i].ColorClampRange = COLORCLAMP_RTFORMAT;
+   uint32_t offset;
+   int size = GENX(BLEND_STATE_length) * 4;
+   size += GENX(BLEND_STATE_ENTRY_length) * 4 * params->num_draw_buffers;
+   uint32_t *state = blorp_alloc_dynamic_state(batch, size, 64, &offset);
+   uint32_t *pos = state;
 
-      blend.Entry[i].WriteDisableRed = params->color_write_disable[0];
-      blend.Entry[i].WriteDisableGreen = params->color_write_disable[1];
-      blend.Entry[i].WriteDisableBlue = params->color_write_disable[2];
-      blend.Entry[i].WriteDisableAlpha = params->color_write_disable[3];
+   GENX(BLEND_STATE_pack)(NULL, pos, &blend);
+   pos += GENX(BLEND_STATE_length);
+
+   for (unsigned i = 0; i < params->num_draw_buffers; ++i) {
+      struct GENX(BLEND_STATE_ENTRY) entry = { 0 };
+      entry.PreBlendColorClampEnable = true;
+      entry.PostBlendColorClampEnable = true;
+      entry.ColorClampRange = COLORCLAMP_RTFORMAT;
+
+      entry.WriteDisableRed = params->color_write_disable[0];
+      entry.WriteDisableGreen = params->color_write_disable[1];
+      entry.WriteDisableBlue = params->color_write_disable[2];
+      entry.WriteDisableAlpha = params->color_write_disable[3];
+      GENX(BLEND_STATE_ENTRY_pack)(NULL, pos, &entry);
+      pos += GENX(BLEND_STATE_ENTRY_length);
    }
 
-   uint32_t offset;
-   void *state = blorp_alloc_dynamic_state(batch,
-                                           GENX(BLEND_STATE_length) * 4,
-                                           64, &offset);
-   GENX(BLEND_STATE_pack)(NULL, state, &blend);
-   blorp_flush_range(batch, state, GENX(BLEND_STATE_length) * 4);
+   blorp_flush_range(batch, state, size);
 
 #if GEN_GEN >= 7
    blorp_emit(batch, GENX(3DSTATE_BLEND_STATE_POINTERS), sp) {
