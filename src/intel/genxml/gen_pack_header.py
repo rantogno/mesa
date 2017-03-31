@@ -357,7 +357,7 @@ class Group(object):
         if self.size > 0:
             length = self.size // 32
         else:
-            length = max(dwords.keys()) + 1
+            length = max(dwords.keys() + [0]) + 1
 
         for index in range(length):
             # Handle MBZ dwords
