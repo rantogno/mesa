@@ -1182,7 +1182,7 @@ emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline)
    const struct brw_tes_prog_data *tes_prog_data = get_tes_prog_data(pipeline);
 
    anv_batch_emit(&pipeline->batch, GENX(3DSTATE_HS), hs) {
-      hs.FunctionEnable = true;
+      hs.Enable = true;
       hs.StatisticsEnable = true;
       hs.KernelStartPointer = tcs_bin->kernel.offset;
 
@@ -1212,7 +1212,7 @@ emit_3dstate_hs_te_ds(struct anv_pipeline *pipeline)
    }
 
    anv_batch_emit(&pipeline->batch, GENX(3DSTATE_DS), ds) {
-      ds.FunctionEnable = true;
+      ds.Enable = true;
       ds.StatisticsEnable = true;
       ds.KernelStartPointer = tes_bin->kernel.offset;
 
@@ -1265,7 +1265,7 @@ emit_3dstate_gs(struct anv_pipeline *pipeline)
    const struct brw_gs_prog_data *gs_prog_data = get_gs_prog_data(pipeline);
 
    anv_batch_emit(&pipeline->batch, GENX(3DSTATE_GS), gs) {
-      gs.FunctionEnable          = true;
+      gs.Enable          = true;
       gs.StatisticsEnable        = true;
       gs.KernelStartPointer      = gs_bin->kernel.offset;
       gs.DispatchMode            = gs_prog_data->base.dispatch_mode;
