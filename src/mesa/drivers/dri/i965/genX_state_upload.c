@@ -42,6 +42,7 @@
 #include "main/fbobject.h"
 #include "main/framebuffer.h"
 #include "main/glformats.h"
+#include "main/shaderapi.h"
 #include "main/stencil.h"
 #include "main/transformfeedback.h"
 #include "main/viewport.h"
@@ -2667,6 +2668,70 @@ static const struct brw_tracked_state genX(scissor_state) = {
 
 /* ---------------------------------------------------------------------- */
 
+#define GEN7_MOCS_L3                    1
+#define upload_constant_state(brw, stage_state, active, opcode)               \
+   do {                                                                       \
+      uint32_t mocs = brw->gen < 8 ? GEN7_MOCS_L3 : 0;                        \
+      bool active_tmp = active && stage_state->push_const_size != 0;          \
+                                                                              \
+      brw_batch_emit(brw, GENX(opcode), pkt) {                                \
+         if (active_tmp) {                                                    \
+            \
+            if (brw->gen >= 9) {                                              \
+               pkt.ConstantBody.ConstantBuffer2ReadLength =                   \
+                  stage_state->push_const_size;                               \
+               pkt.ConstantBody.PointerToConstantBuffer2.bo = brw->batch.bo;  \
+               pkt.ConstantBody.PointerToConstantBuffer2.read_domains =       \
+                  I915_GEM_DOMAIN_RENDER;                                     \
+               pkt.ConstantBody.PointerToConstantBuffer2.offset =             \
+                  stage_state->push_const_offset;                             \
+            } else {                                                          \
+               pkt.ConstantBody.ConstantBuffer0ReadLength =                   \
+                  stage_state->push_const_size;                               \
+               pkt.ConstantBody.PointerToConstantBuffer0.offset =             \
+                  stage_state->push_const_offset | mocs;                      \
+            }                                                                 \
+         }                                                                    \
+      }                                                                       \
+                                                                              \
+      if (brw->gen >= 9)                                                      \
+         brw->ctx.NewDriverState |= BRW_NEW_SURFACES;                         \
+   } while (0);
+
+
+#if GEN_GEN >= 7
+static void
+genX(upload_tes_push_constants)(struct brw_context *brw)
+{
+   struct brw_stage_state *stage_state = &brw->tes.base;
+   /* BRW_NEW_TESS_PROGRAMS */
+   const struct brw_program *tep = brw_program_const(brw->tess_eval_program);
+
+   if (tep) {
+      /* BRW_NEW_TES_PROG_DATA */
+      const struct brw_stage_prog_data *prog_data = brw->tes.base.prog_data;
+      _mesa_shader_write_subroutine_indices(&brw->ctx, MESA_SHADER_TESS_EVAL);
+      gen6_upload_push_constants(brw, &tep->program, prog_data, stage_state);
+   }
+
+   upload_constant_state(brw, stage_state, tep, 3DSTATE_CONSTANT_DS);
+}
+
+static const struct brw_tracked_state genX(tes_push_constants) = {
+   .dirty = {
+      .mesa  = _NEW_PROGRAM_CONSTANTS,
+      .brw   = BRW_NEW_BATCH |
+               BRW_NEW_BLORP |
+               BRW_NEW_PUSH_CONSTANT_ALLOCATION |
+               BRW_NEW_TESS_PROGRAMS |
+               BRW_NEW_TES_PROG_DATA,
+   },
+   .emit = genX(upload_tes_push_constants),
+};
+#endif
+
+/* ---------------------------------------------------------------------- */
+
 void
 genX(init_atoms)(struct brw_context *brw)
 {
@@ -2758,7 +2823,7 @@ genX(init_atoms)(struct brw_context *brw)
 
       &gen6_vs_push_constants, /* Before vs_state */
       &gen7_tcs_push_constants,
-      &gen7_tes_push_constants,
+      &genX(tes_push_constants),
       &gen6_gs_push_constants, /* Before gs_state */
       &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
 
@@ -2845,7 +2910,7 @@ genX(init_atoms)(struct brw_context *brw)
 
       &gen6_vs_push_constants, /* Before vs_state */
       &gen7_tcs_push_constants,
-      &gen7_tes_push_constants,
+      &genX(tes_push_constants),
       &gen6_gs_push_constants, /* Before gs_state */
       &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
 
