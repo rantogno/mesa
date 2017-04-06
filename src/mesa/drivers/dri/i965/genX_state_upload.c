@@ -2752,7 +2752,7 @@ genX(upload_vs_push_constants)(struct brw_context *brw)
 #endif
 }
 
-const struct brw_tracked_state genX(vs_push_constants) = {
+static const struct brw_tracked_state genX(vs_push_constants) = {
    .dirty = {
       .mesa  = _NEW_PROGRAM_CONSTANTS |
                _NEW_TRANSFORM,
@@ -2763,6 +2763,40 @@ const struct brw_tracked_state genX(vs_push_constants) = {
                BRW_NEW_VS_PROG_DATA,
    },
    .emit = genX(upload_vs_push_constants),
+};
+
+static void
+genX(upload_gs_push_constants)(struct brw_context *brw)
+{
+   struct brw_stage_state *stage_state = &brw->gs.base;
+
+   /* BRW_NEW_GEOMETRY_PROGRAM */
+   const struct brw_program *gp = brw_program_const(brw->geometry_program);
+
+   if (gp) {
+      /* BRW_NEW_GS_PROG_DATA */
+      struct brw_stage_prog_data *prog_data = brw->gs.base.prog_data;
+
+      _mesa_shader_write_subroutine_indices(&brw->ctx, MESA_SHADER_GEOMETRY);
+      gen6_upload_push_constants(brw, &gp->program, prog_data, stage_state);
+   }
+
+#if GEN_GEN >= 7
+   upload_constant_state(brw, stage_state, gp, 3DSTATE_CONSTANT_GS);
+#endif
+}
+
+static const struct brw_tracked_state genX(gs_push_constants) = {
+   .dirty = {
+      .mesa  = _NEW_PROGRAM_CONSTANTS |
+               _NEW_TRANSFORM,
+      .brw   = BRW_NEW_BATCH |
+               BRW_NEW_BLORP |
+               BRW_NEW_GEOMETRY_PROGRAM |
+               BRW_NEW_GS_PROG_DATA |
+               BRW_NEW_PUSH_CONSTANT_ALLOCATION,
+   },
+   .emit = genX(upload_gs_push_constants),
 };
 
 /* ---------------------------------------------------------------------- */
@@ -2786,7 +2820,7 @@ genX(init_atoms)(struct brw_context *brw)
       &gen6_depth_stencil_state,	/* must do before cc unit */
 
       &genX(vs_push_constants), /* Before vs_state */
-      &gen6_gs_push_constants, /* Before gs_state */
+      &genX(gs_push_constants), /* Before gs_state */
       &gen6_wm_push_constants, /* Before wm_state */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
@@ -2859,7 +2893,7 @@ genX(init_atoms)(struct brw_context *brw)
       &genX(vs_push_constants), /* Before vs_state */
       &gen7_tcs_push_constants,
       &genX(tes_push_constants),
-      &gen6_gs_push_constants, /* Before gs_state */
+      &genX(gs_push_constants), /* Before gs_state */
       &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
@@ -2946,7 +2980,7 @@ genX(init_atoms)(struct brw_context *brw)
       &genX(vs_push_constants), /* Before vs_state */
       &gen7_tcs_push_constants,
       &genX(tes_push_constants),
-      &gen6_gs_push_constants, /* Before gs_state */
+      &genX(gs_push_constants), /* Before gs_state */
       &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
