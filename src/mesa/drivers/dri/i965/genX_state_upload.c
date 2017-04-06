@@ -2799,6 +2799,36 @@ static const struct brw_tracked_state genX(gs_push_constants) = {
    .emit = genX(upload_gs_push_constants),
 };
 
+static void
+genX(upload_wm_push_constants)(struct brw_context *brw)
+{
+   struct brw_stage_state *stage_state = &brw->wm.base;
+   /* BRW_NEW_FRAGMENT_PROGRAM */
+   const struct brw_program *fp = brw_program_const(brw->fragment_program);
+   /* BRW_NEW_FS_PROG_DATA */
+   const struct brw_stage_prog_data *prog_data = brw->wm.base.prog_data;
+
+   _mesa_shader_write_subroutine_indices(&brw->ctx, MESA_SHADER_FRAGMENT);
+
+   gen6_upload_push_constants(brw, &fp->program, prog_data, stage_state);
+
+#if GEN_GEN >= 7
+   upload_constant_state(brw, stage_state, true, 3DSTATE_CONSTANT_PS);
+#endif
+}
+
+static const struct brw_tracked_state genX(wm_push_constants) = {
+   .dirty = {
+      .mesa  = _NEW_PROGRAM_CONSTANTS,
+      .brw   = BRW_NEW_BATCH |
+               BRW_NEW_BLORP |
+               BRW_NEW_FRAGMENT_PROGRAM |
+               BRW_NEW_FS_PROG_DATA |
+               BRW_NEW_PUSH_CONSTANT_ALLOCATION,
+   },
+   .emit = genX(upload_wm_push_constants),
+};
+
 /* ---------------------------------------------------------------------- */
 
 void
@@ -2821,7 +2851,7 @@ genX(init_atoms)(struct brw_context *brw)
 
       &genX(vs_push_constants), /* Before vs_state */
       &genX(gs_push_constants), /* Before gs_state */
-      &gen6_wm_push_constants, /* Before wm_state */
+      &genX(wm_push_constants), /* Before wm_state */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
        * table upload must be last.
@@ -2894,7 +2924,7 @@ genX(init_atoms)(struct brw_context *brw)
       &gen7_tcs_push_constants,
       &genX(tes_push_constants),
       &genX(gs_push_constants), /* Before gs_state */
-      &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
+      &genX(wm_push_constants), /* Before wm_surfaces and constant_buffer */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
        * table upload must be last.
@@ -2981,7 +3011,7 @@ genX(init_atoms)(struct brw_context *brw)
       &gen7_tcs_push_constants,
       &genX(tes_push_constants),
       &genX(gs_push_constants), /* Before gs_state */
-      &gen6_wm_push_constants, /* Before wm_surfaces and constant_buffer */
+      &genX(wm_push_constants), /* Before wm_surfaces and constant_buffer */
 
       /* Surface state setup.  Must come before the VS/WM unit.  The binding
        * table upload must be last.

@@ -117,7 +117,6 @@ extern const struct brw_tracked_state gen6_sol_surface;
 extern const struct brw_tracked_state gen6_sf_vp;
 extern const struct brw_tracked_state gen6_urb;
 extern const struct brw_tracked_state gen6_viewport_state;
-extern const struct brw_tracked_state gen6_wm_push_constants;
 extern const struct brw_tracked_state gen7_depthbuffer;
 extern const struct brw_tracked_state gen7_tcs_push_constants;
 extern const struct brw_tracked_state gen7_l3_state;
