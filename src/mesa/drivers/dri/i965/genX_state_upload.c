@@ -2877,7 +2877,7 @@ genX(init_atoms)(struct brw_context *brw)
       &gen6_viewport_state,	/* must do after *_vp stages */
 
       &gen6_urb,
-      &gen6_blend_state,		/* must do before cc unit */
+      &genX(blend_state),		/* must do before cc unit */
       &gen6_color_calc_state,	/* must do before cc unit */
       &gen6_depth_stencil_state,	/* must do before cc unit */
 
