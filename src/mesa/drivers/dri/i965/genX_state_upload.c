@@ -2728,6 +2728,38 @@ static const struct brw_tracked_state genX(tes_push_constants) = {
    },
    .emit = genX(upload_tes_push_constants),
 };
+
+static void
+genX(upload_tcs_push_constants)(struct brw_context *brw)
+{
+   struct brw_stage_state *stage_state = &brw->tcs.base;
+   /* BRW_NEW_TESS_PROGRAMS */
+   const struct brw_program *tcp = brw_program_const(brw->tess_ctrl_program);
+   bool active = brw->tess_eval_program;
+
+   if (active) {
+      /* BRW_NEW_TCS_PROG_DATA */
+      const struct brw_stage_prog_data *prog_data = brw->tcs.base.prog_data;
+
+      _mesa_shader_write_subroutine_indices(&brw->ctx, MESA_SHADER_TESS_CTRL);
+      gen6_upload_push_constants(brw, &tcp->program, prog_data, stage_state);
+   }
+
+   upload_constant_state(brw, stage_state, active, 3DSTATE_CONSTANT_HS);
+}
+
+static const struct brw_tracked_state genX(tcs_push_constants) = {
+   .dirty = {
+      .mesa  = _NEW_PROGRAM_CONSTANTS,
+      .brw   = BRW_NEW_BATCH |
+               BRW_NEW_BLORP |
+               BRW_NEW_DEFAULT_TESS_LEVELS |
+               BRW_NEW_PUSH_CONSTANT_ALLOCATION |
+               BRW_NEW_TESS_PROGRAMS |
+               BRW_NEW_TCS_PROG_DATA,
+   },
+   .emit = genX(upload_tcs_push_constants),
+};
 #endif
 
 static void
@@ -2921,7 +2953,7 @@ genX(init_atoms)(struct brw_context *brw)
       &brw_wm_image_surfaces, /* Before wm push/pull constants and binding table */
 
       &genX(vs_push_constants), /* Before vs_state */
-      &gen7_tcs_push_constants,
+      &genX(tcs_push_constants),
       &genX(tes_push_constants),
       &genX(gs_push_constants), /* Before gs_state */
       &genX(wm_push_constants), /* Before wm_surfaces and constant_buffer */
@@ -3008,7 +3040,7 @@ genX(init_atoms)(struct brw_context *brw)
       &brw_wm_image_surfaces, /* Before wm push/pull constants and binding table */
 
       &genX(vs_push_constants), /* Before vs_state */
-      &gen7_tcs_push_constants,
+      &genX(tcs_push_constants),
       &genX(tes_push_constants),
       &genX(gs_push_constants), /* Before gs_state */
       &genX(wm_push_constants), /* Before wm_surfaces and constant_buffer */
