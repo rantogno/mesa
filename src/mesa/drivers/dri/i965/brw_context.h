@@ -1396,10 +1396,6 @@ void brw_upload_cs_urb_state(struct brw_context *brw);
 /* brw_vs.c */
 gl_clip_plane *brw_select_clip_planes(struct gl_context *ctx);
 
-/* brw_draw_upload.c */
-unsigned brw_get_vertex_surface_type(struct brw_context *brw,
-                                     const struct gl_vertex_array *glarray);
-
 static inline unsigned
 brw_get_index_type(unsigned index_size)
 {
@@ -1408,8 +1404,6 @@ brw_get_index_type(unsigned index_size)
     */
    return (index_size >> 1) << 8;
 }
-
-void brw_prepare_vertices(struct brw_context *brw);
 
 /* brw_wm_surface_state.c */
 void brw_init_surface_formats(struct brw_context *brw);
