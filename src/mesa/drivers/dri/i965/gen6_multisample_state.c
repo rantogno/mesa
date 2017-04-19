@@ -122,7 +122,7 @@ gen6_set_sample_maps(struct gl_context *ctx)
 /**
  * 3DSTATE_MULTISAMPLE
  */
-void
+static void
 gen6_emit_3dstate_multisample(struct brw_context *brw,
                               unsigned num_samples)
 {
@@ -160,7 +160,7 @@ gen6_emit_3dstate_multisample(struct brw_context *brw,
    ADVANCE_BATCH();
 }
 
-unsigned
+static unsigned
 gen6_determine_sample_mask(struct brw_context *brw)
 {
    struct gl_context *ctx = &brw->ctx;
@@ -195,7 +195,7 @@ gen6_determine_sample_mask(struct brw_context *brw)
 /**
  * 3DSTATE_SAMPLE_MASK
  */
-void
+static void
 gen6_emit_3dstate_sample_mask(struct brw_context *brw, unsigned mask)
 {
    BEGIN_BATCH(2);
