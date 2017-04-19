@@ -549,6 +549,7 @@ emit_ms_state(struct anv_pipeline *pipeline,
    anv_batch_emit(&pipeline->batch, GENX(3DSTATE_MULTISAMPLE), ms) {
       ms.NumberofMultisamples       = log2_samples;
 
+      ms.PixelLocation              = CENTER;
 #if GEN_GEN >= 8
       /* The PRM says that this bit is valid only for DX9:
        *
@@ -556,9 +557,7 @@ emit_ms_state(struct anv_pipeline *pipeline,
        *    should not have any effect by setting or not setting this bit.
        */
       ms.PixelPositionOffsetEnable  = false;
-      ms.PixelLocation              = CENTER;
 #else
-      ms.PixelLocation              = PIXLOC_CENTER;
 
       switch (samples) {
       case 1:
