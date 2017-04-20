@@ -446,6 +446,7 @@ void brw_copy_pipeline_atoms(struct brw_context *brw,
                              const struct brw_tracked_state **atoms,
                              int num_atoms);
 void gen4_init_atoms(struct brw_context *brw);
+void gen45_init_atoms(struct brw_context *brw);
 void gen5_init_atoms(struct brw_context *brw);
 void gen6_init_atoms(struct brw_context *brw);
 void gen7_init_atoms(struct brw_context *brw);
