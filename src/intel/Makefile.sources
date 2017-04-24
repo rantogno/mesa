@@ -27,6 +27,7 @@ COMPILER_FILES = \
 	compiler/brw_compiler.h \
 	compiler/brw_dead_control_flow.cpp \
 	compiler/brw_dead_control_flow.h \
+	compiler/brw_defines_common.h \
 	compiler/brw_disasm.c \
 	compiler/brw_eu.c \
 	compiler/brw_eu_compact.c \
