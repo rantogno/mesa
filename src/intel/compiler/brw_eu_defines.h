@@ -33,6 +33,7 @@
 #define BRW_EU_DEFINES_H
 
 #include "util/macros.h"
+#include "brw_defines_common.h"
 
 /* The following hunk, up-to "Execution Unit" is used by both the
  * intel/compiler and i965 codebase. */
@@ -71,27 +72,6 @@
 #define _3DPRIM_LINESTRIP_CONT_BF 0x14
 #define _3DPRIM_TRIFAN_NOSTIPPLE  0x16
 #define _3DPRIM_PATCHLIST(n) ({ assert(n > 0 && n <= 32); 0x20 + (n - 1); })
-
-enum brw_barycentric_mode {
-   BRW_BARYCENTRIC_PERSPECTIVE_PIXEL       = 0,
-   BRW_BARYCENTRIC_PERSPECTIVE_CENTROID    = 1,
-   BRW_BARYCENTRIC_PERSPECTIVE_SAMPLE      = 2,
-   BRW_BARYCENTRIC_NONPERSPECTIVE_PIXEL    = 3,
-   BRW_BARYCENTRIC_NONPERSPECTIVE_CENTROID = 4,
-   BRW_BARYCENTRIC_NONPERSPECTIVE_SAMPLE   = 5,
-   BRW_BARYCENTRIC_MODE_COUNT              = 6
-};
-#define BRW_BARYCENTRIC_NONPERSPECTIVE_BITS \
-   ((1 << BRW_BARYCENTRIC_NONPERSPECTIVE_PIXEL) | \
-    (1 << BRW_BARYCENTRIC_NONPERSPECTIVE_CENTROID) | \
-    (1 << BRW_BARYCENTRIC_NONPERSPECTIVE_SAMPLE))
-
-enum brw_pixel_shader_computed_depth_mode {
-   BRW_PSCDEPTH_OFF   = 0, /* PS does not compute depth */
-   BRW_PSCDEPTH_ON    = 1, /* PS computes depth; no guarantee about value */
-   BRW_PSCDEPTH_ON_GE = 2, /* PS guarantees output depth >= source depth */
-   BRW_PSCDEPTH_ON_LE = 3, /* PS guarantees output depth <= source depth */
-};
 
 /* Bitfields for the URB_WRITE message, DW2 of message header: */
 #define URB_WRITE_PRIM_END		0x1
