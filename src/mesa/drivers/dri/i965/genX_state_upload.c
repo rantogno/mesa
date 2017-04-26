@@ -200,7 +200,7 @@ static const struct brw_tracked_state genX(depth_stencil_state) = {
               _NEW_STENCIL,
       .brw  = BRW_NEW_BLORP |
               (GEN_GEN >= 8 ? BRW_NEW_CONTEXT
-                            : BRW_NEW_BLORP |
+                            : BRW_NEW_BATCH |
                               BRW_NEW_STATE_BASE_ADDRESS),
    },
    .emit = genX(upload_depth_stencil_state),
