@@ -36,6 +36,8 @@
 #include "main/framebuffer.h"
 #include "main/stencil.h"
 
+#include "compiler/brw_defines_common.h"
+
 UNUSED static void *
 emit_dwords(struct brw_context *brw, unsigned n)
 {
@@ -218,41 +220,37 @@ genX(upload_clip_state)(struct brw_context *brw)
    /* _NEW_BUFFERS */
    struct gl_framebuffer *fb = ctx->DrawBuffer;
 
+   /* BRW_NEW_WM_PROG_DATA */
+   struct brw_wm_prog_data *wm_prog_data =
+      brw_wm_prog_data(brw->wm.base.prog_data);
+
    brw_batch_emit(brw, GENX(3DSTATE_CLIP), clip) {
-      if (!brw->meta_in_progress)
-         clip.StatisticsEnable = true;
+      clip.StatisticsEnable = !brw->meta_in_progress;
 
-      /* TODO: How to properly check for this?
-       * For now, copying code form vulkan
-       */
-      if (brw_wm_prog_data(brw->wm.base.prog_data)->barycentric_interp_modes &
-          0x38)
+      if (wm_prog_data->barycentric_interp_modes &
+          BRW_BARYCENTRIC_NONPERSPECTIVE_BITS)
          clip.NonPerspectiveBarycentricEnable = true;
-
-      clip.UserClipDistanceCullTestEnableBitmask =
-         brw_vue_prog_data(brw->vs.base.prog_data)->cull_distance_mask;
 
 #if GEN_GEN >= 7
       clip.EarlyCullEnable = true;
 #endif
 
 #if GEN_GEN == 7
-      if (ctx->Polygon._FrontBit == _mesa_is_user_fbo(fb))
-         clip.FrontWinding = 1;
+      clip.FrontWinding = ctx->Polygon._FrontBit == _mesa_is_user_fbo(fb);
 
       if (ctx->Polygon.CullFlag) {
          switch (ctx->Polygon.CullFaceMode) {
-            case GL_FRONT:
-               clip.CullMode = CULLMODE_FRONT;
-               break;
-            case GL_BACK:
-               clip.CullMode = CULLMODE_BACK;
-               break;
-            case GL_FRONT_AND_BACK:
-               clip.CullMode = CULLMODE_BOTH;
-               break;
-            default:
-               unreachable("Should not get here: invalid CullFlag");
+         case GL_FRONT:
+            clip.CullMode = CULLMODE_FRONT;
+            break;
+         case GL_BACK:
+            clip.CullMode = CULLMODE_BACK;
+            break;
+         case GL_FRONT_AND_BACK:
+            clip.CullMode = CULLMODE_BOTH;
+            break;
+         default:
+            unreachable("Should not get here: invalid CullFlag");
          }
       } else {
          clip.CullMode = CULLMODE_NONE;
@@ -260,8 +258,10 @@ genX(upload_clip_state)(struct brw_context *brw)
 #endif
 
 #if GEN_GEN < 8
-      if (!ctx->Transform.DepthClamp)
-         clip.ViewportZClipTestEnable = true;
+      clip.UserClipDistanceCullTestEnableBitmask =
+         brw_vue_prog_data(brw->vs.base.prog_data)->cull_distance_mask;
+
+      clip.ViewportZClipTestEnable = !ctx->Transform.DepthClamp;
 #endif
 
       /* _NEW_LIGHT */
@@ -304,10 +304,7 @@ genX(upload_clip_state)(struct brw_context *brw)
          clip.ClipMode = CLIPMODE_NORMAL;
       }
 
-      if (brw->primitive == _3DPRIM_RECTLIST)
-         clip.ClipEnable = false;
-      else
-         clip.ClipEnable = true;
+      clip.ClipEnable = brw->primitive != _3DPRIM_RECTLIST;
 
       /* _NEW_POLYGON,
        * BRW_NEW_GEOMETRY_PROGRAM | BRW_NEW_TES_PROG_DATA | BRW_NEW_PRIMITIVE
@@ -318,7 +315,7 @@ genX(upload_clip_state)(struct brw_context *brw)
       clip.MinimumPointWidth = 0.125;
       clip.MaximumPointWidth = 255.875;
       clip.MaximumVPIndex = viewport_count - 1;
-      if (_mesa_geometric_layers(fb) <= 0)
+      if (_mesa_geometric_layers(fb) == 0)
          clip.ForceZeroRTAIndexEnable = true;
    }
 }
