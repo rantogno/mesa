@@ -235,14 +235,17 @@ genX(calculate_attr_overrides)(const struct brw_context *brw,
                                uint32_t *urb_entry_read_length,
                                uint32_t *urb_entry_read_offset)
 {
+   const struct gl_context *ctx = &brw->ctx;
+
+   /* _NEW_POINT */
+   const struct gl_point_attrib *point = &ctx->Point;
+
    /* BRW_NEW_FS_PROG_DATA */
    const struct brw_wm_prog_data *wm_prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
    uint32_t max_source_attr = 0;
 
    *point_sprite_enables = 0;
-
-   *urb_entry_read_offset = BRW_SF_URB_ENTRY_READ_OFFSET;
 
    /* BRW_NEW_FRAGMENT_PROGRAM
     *
@@ -286,9 +289,9 @@ genX(calculate_attr_overrides)(const struct brw_context *brw,
       /* _NEW_POINT */
       bool point_sprite = false;
       if (drawing_points) {
-         if (brw->ctx.Point.PointSprite &&
+         if (point->PointSprite &&
              (attr >= VARYING_SLOT_TEX0 && attr <= VARYING_SLOT_TEX7) &&
-             (brw->ctx.Point.CoordReplace & (1u << (attr - VARYING_SLOT_TEX0)))) {
+             (point->CoordReplace & (1u << (attr - VARYING_SLOT_TEX0)))) {
             point_sprite = true;
          }
 
@@ -336,7 +339,7 @@ genX(calculate_attr_overrides)(const struct brw_context *brw,
     *
     * Similar text exists for Ivy Bridge.
     */
-   *urb_entry_read_length = ALIGN(max_source_attr + 1, 2) / 2;
+   *urb_entry_read_length = DIV_ROUND_UP(max_source_attr + 1, 2);
 }
 #endif
 
@@ -575,13 +578,6 @@ genX(upload_sf)(struct brw_context *brw)
    struct gl_context *ctx = &brw->ctx;
    float point_size;
 
-#if GEN_GEN == 6
-   /* BRW_NEW_FS_PROG_DATA */
-   const struct brw_wm_prog_data *wm_prog_data =
-      brw_wm_prog_data(brw->wm.base.prog_data);
-   uint32_t num_outputs = wm_prog_data->num_varying_inputs;
-#endif
-
 #if GEN_GEN <= 7
    /* _NEW_BUFFERS */
    bool render_to_fbo = _mesa_is_user_fbo(ctx->DrawBuffer);
@@ -592,21 +588,6 @@ genX(upload_sf)(struct brw_context *brw)
       sf.StatisticsEnable = true;
       sf.ViewportTransformEnable = brw->sf.viewport_transform_enable;
 
-#if GEN_GEN <= 6
-      sf.AttributeSwizzleEnable = true;
-      sf.NumberofSFOutputAttributes = num_outputs;
-
-      /*
-       * Window coordinates in an FBO are inverted, which means point
-       * sprite origin must be inverted, too.
-       */
-      if ((ctx->Point.SpriteOrigin == GL_LOWER_LEFT) != render_to_fbo) {
-         sf.PointSpriteTextureCoordinateOrigin = LOWERLEFT;
-      } else {
-         sf.PointSpriteTextureCoordinateOrigin = UPPERLEFT;
-      }
-#endif
-
 #if GEN_GEN == 7
       /* _NEW_BUFFERS */
       sf.DepthBufferSurfaceFormat = brw_depthbuffer_format(brw);
@@ -614,8 +595,7 @@ genX(upload_sf)(struct brw_context *brw)
 
 #if GEN_GEN <= 7
       /* _NEW_POLYGON */
-      if (ctx->Polygon._FrontBit == render_to_fbo)
-         sf.FrontWinding = 1;
+      sf.FrontWinding = ctx->Polygon._FrontBit == render_to_fbo;
       sf.GlobalDepthOffsetEnableSolid = ctx->Polygon.OffsetFill;
       sf.GlobalDepthOffsetEnableWireframe = ctx->Polygon.OffsetLine;
       sf.GlobalDepthOffsetEnablePoint = ctx->Polygon.OffsetPoint;
@@ -675,15 +655,13 @@ genX(upload_sf)(struct brw_context *brw)
       if (multisampled_fbo && ctx->Multisample.Enabled)
          sf.MultisampleRasterizationMode = MSRASTMODE_ON_PATTERN;
 
-      /* copied from gen4 */
       sf.GlobalDepthOffsetConstant = ctx->Polygon.OffsetUnits * 2;
       sf.GlobalDepthOffsetScale = ctx->Polygon.OffsetFactor;
       sf.GlobalDepthOffsetClamp = ctx->Polygon.OffsetClamp;
 #endif
 
       /* _NEW_LINE */
-      float line_width = brw_get_line_width_float(brw);
-      sf.LineWidth = line_width;
+      sf.LineWidth = brw_get_line_width_float(brw);
 
       if (ctx->Line.SmoothFlag) {
          sf.LineEndCapAntialiasingRegionWidth = _10pixels;
@@ -708,10 +686,7 @@ genX(upload_sf)(struct brw_context *brw)
          sf.SmoothPointEnable = true;
 #endif
 
-#if GEN_GEN < 7
-      if (ctx->Line.SmoothFlag)
-#endif
-         sf.AALineDistanceMode = AALINEDISTANCE_TRUE;
+      sf.AALineDistanceMode = AALINEDISTANCE_TRUE;
 
       /* _NEW_LIGHT */
       if (ctx->Light.ProvokingVertex != GL_FIRST_VERTEX_CONVENTION) {
@@ -723,6 +698,23 @@ genX(upload_sf)(struct brw_context *brw)
       }
 
 #if GEN_GEN == 6
+      /* BRW_NEW_FS_PROG_DATA */
+      const struct brw_wm_prog_data *wm_prog_data =
+         brw_wm_prog_data(brw->wm.base.prog_data);
+
+      sf.AttributeSwizzleEnable = true;
+      sf.NumberofSFOutputAttributes = wm_prog_data->num_varying_inputs;
+
+      /*
+       * Window coordinates in an FBO are inverted, which means point
+       * sprite origin must be inverted, too.
+       */
+      if ((ctx->Point.SpriteOrigin == GL_LOWER_LEFT) != render_to_fbo) {
+         sf.PointSpriteTextureCoordinateOrigin = LOWERLEFT;
+      } else {
+         sf.PointSpriteTextureCoordinateOrigin = UPPERLEFT;
+      }
+
       /* BRW_NEW_VUE_MAP_GEOM_OUT | BRW_NEW_FRAGMENT_PROGRAM |
        * _NEW_POINT | _NEW_LIGHT | _NEW_PROGRAM | BRW_NEW_FS_PROG_DATA
        */
@@ -743,10 +735,10 @@ genX(upload_sf)(struct brw_context *brw)
 static const struct brw_tracked_state genX(sf_state) = {
    .dirty = {
       .mesa  = _NEW_LIGHT |
-               _NEW_PROGRAM |
                _NEW_LINE |
                _NEW_MULTISAMPLE |
                _NEW_POINT |
+               _NEW_PROGRAM |
                (GEN_GEN <= 7 ? _NEW_BUFFERS | _NEW_POLYGON : 0),
       .brw   = BRW_NEW_BLORP |
                BRW_NEW_CONTEXT |
@@ -755,7 +747,7 @@ static const struct brw_tracked_state genX(sf_state) = {
                                BRW_NEW_PRIMITIVE |
                                BRW_NEW_TES_PROG_DATA
                              : 0) |
-               (GEN_GEN <= 6 ? BRW_NEW_FS_PROG_DATA |
+               (GEN_GEN == 6 ? BRW_NEW_FS_PROG_DATA |
                                BRW_NEW_FRAGMENT_PROGRAM
                              : 0),
    },
