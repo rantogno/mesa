@@ -98,9 +98,9 @@ __gen_combine_address(struct brw_context *brw, void *location,
       _dw + 1; /* Array starts at dw[1] */             \
    })
 
-#define brw_state_emit(brw, cmd, aub, align, offset, name)         \
+#define brw_state_emit(brw, cmd, align, offset, name)              \
    for (struct cmd name = { 0, },                                  \
-        *_dst = brw_state_batch(brw, aub,_brw_cmd_length(cmd) * 4, \
+        *_dst = brw_state_batch(brw, _brw_cmd_length(cmd) * 4,     \
                                 align, offset);                    \
         __builtin_expect(_dst != NULL, 1);                         \
         _brw_cmd_pack(cmd)(brw, (void *)_dst, &name),              \
