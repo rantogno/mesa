@@ -1481,7 +1481,6 @@ genX(upload_blend_state)(struct brw_context *brw)
 
    uint32_t *blend_map;
    blend_map = brw_state_batch(brw, size, 64, &brw->cc.blend_state_offset);
-   memset(blend_map, 0, size);
 
 #if GEN_GEN >= 8
    struct GENX(BLEND_STATE) blend = { 0 };
@@ -1501,7 +1500,7 @@ genX(upload_blend_state)(struct brw_context *brw)
          if (_mesa_is_multisample_enabled(ctx)) {
             if (ctx->Multisample.SampleAlphaToCoverage) {
                blend.AlphaToCoverageEnable = true;
-               blend.AlphaToCoverageDitherEnable = true;
+               blend.AlphaToCoverageDitherEnable = GEN_GEN >= 7;
             }
             if (ctx->Multisample.SampleAlphaToOne)
                blend.AlphaToOneEnable = true;
@@ -1537,36 +1536,21 @@ genX(upload_blend_state)(struct brw_context *brw)
           */
          bool integer = ctx->DrawBuffer->_IntegerBuffers & (0x1 << i);
 
-#if GEN_GEN < 8
-         GLenum rb_type;
-         /* bool is_buffer_zero_integer_format = false; */
-
-         if (rb)
-            rb_type = _mesa_get_format_datatype(rb->Format);
-         else
-            rb_type = GL_UNSIGNED_NORMALIZED;
-
-         /* if(i == 0 && integer) */
-         /*    is_buffer_zero_integer_format = true; */
-#endif
-
          /* _NEW_COLOR */
          if (ctx->Color.ColorLogicOpEnabled) {
-#if GEN_GEN < 8
+            GLenum rb_type = rb ? _mesa_get_format_datatype(rb->Format)
+                                : GL_UNSIGNED_NORMALIZED;
             WARN_ONCE(ctx->Color.LogicOp != GL_COPY &&
                       rb_type != GL_UNSIGNED_NORMALIZED &&
                       rb_type != GL_FLOAT, "Ignoring %s logic op on %s "
                       "renderbuffer\n",
                       _mesa_enum_to_string(ctx->Color.LogicOp),
                       _mesa_enum_to_string(rb_type));
-            if (rb_type == GL_UNSIGNED_NORMALIZED) {
-#endif
-            entry.LogicOpEnable = true;
-            entry.LogicOpFunction =
-               intel_translate_logic_op(ctx->Color.LogicOp);
-#if GEN_GEN < 8
+            if (GEN_GEN >= 8 || rb_type == GL_UNSIGNED_NORMALIZED) {
+               entry.LogicOpEnable = true;
+               entry.LogicOpFunction =
+                  intel_translate_logic_op(ctx->Color.LogicOp);
             }
-#endif
          } else if (ctx->Color.BlendEnabled & (1 << i) && !integer &&
                     !ctx->Color._AdvancedBlendMode) {
             GLenum eqRGB = ctx->Color.Blend[i].EquationRGB;
@@ -1630,14 +1614,10 @@ genX(upload_blend_state)(struct brw_context *brw)
          entry.PostBlendColorClampEnable = true;
          entry.ColorClampRange = COLORCLAMP_RTFORMAT;
 
-         if (!ctx->Color.ColorMask[i][0])
-            entry.WriteDisableRed = true;
-         if (!ctx->Color.ColorMask[i][1])
-            entry.WriteDisableGreen = true;
-         if (!ctx->Color.ColorMask[i][2])
-            entry.WriteDisableBlue = true;
-         if (!ctx->Color.ColorMask[i][3])
-            entry.WriteDisableAlpha = true;
+         entry.WriteDisableRed   = !ctx->Color.ColorMask[i][0];
+         entry.WriteDisableGreen = !ctx->Color.ColorMask[i][1];
+         entry.WriteDisableBlue  = !ctx->Color.ColorMask[i][2];
+         entry.WriteDisableAlpha = !ctx->Color.ColorMask[i][3];
 
          /* From the BLEND_STATE docs, DWord 0, Bit 29 (AlphaToOne Enable):
           * "If Dual Source Blending is enabled, this bit must be disabled."
