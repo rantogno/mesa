@@ -761,9 +761,10 @@ genX(upload_sbe)(struct brw_context *brw)
    /* BRW_NEW_FS_PROG_DATA */
    const struct brw_wm_prog_data *wm_prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
-   uint32_t num_outputs = wm_prog_data->num_varying_inputs;
 #if GEN_GEN >= 8
    struct GENX(SF_OUTPUT_ATTRIBUTE_DETAIL) attr_overrides[16] = { { 0 } };
+#else
+#define attr_overrides sbe.Attribute
 #endif
    uint32_t urb_entry_read_length;
    uint32_t urb_entry_read_offset;
@@ -771,7 +772,7 @@ genX(upload_sbe)(struct brw_context *brw)
 
    brw_batch_emit(brw, GENX(3DSTATE_SBE), sbe) {
       sbe.AttributeSwizzleEnable = true;
-      sbe.NumberofSFOutputAttributes = num_outputs;
+      sbe.NumberofSFOutputAttributes = wm_prog_data->num_varying_inputs;
 
       /* _NEW_BUFFERS */
       bool render_to_fbo = _mesa_is_user_fbo(ctx->DrawBuffer);
@@ -791,19 +792,11 @@ genX(upload_sbe)(struct brw_context *brw)
        * BRW_NEW_GS_PROG_DATA | BRW_NEW_PRIMITIVE | BRW_NEW_TES_PROG_DATA |
        * BRW_NEW_VUE_MAP_GEOM_OUT
        */
-#if GEN_GEN < 8
-      genX(calculate_attr_overrides)(brw,
-                                     sbe.Attribute,
-                                     &point_sprite_enables,
-                                     &urb_entry_read_length,
-                                     &urb_entry_read_offset);
-#else
       genX(calculate_attr_overrides)(brw,
                                      attr_overrides,
                                      &point_sprite_enables,
                                      &urb_entry_read_length,
                                      &urb_entry_read_offset);
-#endif
 
       /* Typically, the URB entry read length and offset should be programmed
        * in 3DSTATE_VS and 3DSTATE_GS; SBE inherits it from the last active
@@ -845,6 +838,10 @@ genX(upload_sbe)(struct brw_context *brw)
       for (int i = 0; i < 16; i++)
          sbes.Attribute[i] = attr_overrides[i];
    }
+#endif
+
+#if GEN_GEN < 8
+#undef attr_overrides
 #endif
 }
 
