@@ -351,7 +351,7 @@ genX(upload_raster)(struct brw_context *brw)
    struct gl_context *ctx = &brw->ctx;
 
    /* _NEW_BUFFERS */
-   bool render_to_fbo = _mesa_is_user_fbo(brw->ctx.DrawBuffer);
+   bool render_to_fbo = _mesa_is_user_fbo(ctx->DrawBuffer);
 
    /* _NEW_POLYGON */
    struct gl_polygon_attrib *polygon = &ctx->Polygon;
@@ -365,17 +365,17 @@ genX(upload_raster)(struct brw_context *brw)
 
       if (polygon->CullFlag) {
          switch (polygon->CullFaceMode) {
-            case GL_FRONT:
-               raster.CullMode = CULLMODE_FRONT;
-               break;
-            case GL_BACK:
-               raster.CullMode = CULLMODE_BACK;
-               break;
-            case GL_FRONT_AND_BACK:
-               raster.CullMode = CULLMODE_BOTH;
-               break;
-            default:
-               unreachable("not reached");
+         case GL_FRONT:
+            raster.CullMode = CULLMODE_FRONT;
+            break;
+         case GL_BACK:
+            raster.CullMode = CULLMODE_BACK;
+            break;
+         case GL_FRONT_AND_BACK:
+            raster.CullMode = CULLMODE_BOTH;
+            break;
+         default:
+            unreachable("not reached");
          }
       } else {
          raster.CullMode = CULLMODE_NONE;
@@ -391,31 +391,31 @@ genX(upload_raster)(struct brw_context *brw)
       raster.GlobalDepthOffsetEnablePoint = polygon->OffsetPoint;
 
       switch (polygon->FrontMode) {
-         case GL_FILL:
-            raster.FrontFaceFillMode = FILL_MODE_SOLID;
-            break;
-         case GL_LINE:
-            raster.FrontFaceFillMode = FILL_MODE_WIREFRAME;
-            break;
-         case GL_POINT:
-            raster.FrontFaceFillMode = FILL_MODE_POINT;
-            break;
-         default:
-            unreachable("not reached");
+      case GL_FILL:
+         raster.FrontFaceFillMode = FILL_MODE_SOLID;
+         break;
+      case GL_LINE:
+         raster.FrontFaceFillMode = FILL_MODE_WIREFRAME;
+         break;
+      case GL_POINT:
+         raster.FrontFaceFillMode = FILL_MODE_POINT;
+         break;
+      default:
+         unreachable("not reached");
       }
 
       switch (polygon->BackMode) {
-         case GL_FILL:
-            raster.BackFaceFillMode = FILL_MODE_SOLID;
-            break;
-         case GL_LINE:
-            raster.BackFaceFillMode = FILL_MODE_WIREFRAME;
-            break;
-         case GL_POINT:
-            raster.BackFaceFillMode = FILL_MODE_POINT;
-            break;
-         default:
-            unreachable("not reached");
+      case GL_FILL:
+         raster.BackFaceFillMode = FILL_MODE_SOLID;
+         break;
+      case GL_LINE:
+         raster.BackFaceFillMode = FILL_MODE_WIREFRAME;
+         break;
+      case GL_POINT:
+         raster.BackFaceFillMode = FILL_MODE_POINT;
+         break;
+      default:
+         unreachable("not reached");
       }
 
       /* _NEW_LINE */
@@ -443,7 +443,6 @@ genX(upload_raster)(struct brw_context *brw)
       raster.GlobalDepthOffsetClamp = polygon->OffsetClamp;
       raster.GlobalDepthOffsetScale = polygon->OffsetFactor;
 
-      /* copied from gen4 */
       raster.GlobalDepthOffsetConstant = polygon->OffsetUnits * 2;
    }
 }
