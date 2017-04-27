@@ -1641,37 +1641,38 @@ static const struct brw_tracked_state genX(raster_state) = {
 static void
 genX(upload_ps_extra)(struct brw_context *brw)
 {
+   UNUSED struct gl_context *ctx = &brw->ctx;
+
    const struct brw_wm_prog_data *prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
 
-   brw_batch_emit(brw, GENX(3DSTATE_PS_EXTRA), pse) {
-      pse.PixelShaderValid = true;
-      pse.PixelShaderComputedDepthMode = prog_data->computed_depth_mode;
-      pse.PixelShaderKillsPixel = prog_data->uses_kill;
-      pse.AttributeEnable = prog_data->num_varying_inputs != 0;
-      pse.PixelShaderUsesSourceDepth = prog_data->uses_src_depth;
-      pse.PixelShaderUsesSourceW = prog_data->uses_src_w;
-      pse.PixelShaderIsPerSample = prog_data->persample_dispatch;
+   brw_batch_emit(brw, GENX(3DSTATE_PS_EXTRA), psx) {
+      psx.PixelShaderValid = true;
+      psx.PixelShaderComputedDepthMode = prog_data->computed_depth_mode;
+      psx.PixelShaderKillsPixel = prog_data->uses_kill;
+      psx.AttributeEnable = prog_data->num_varying_inputs != 0;
+      psx.PixelShaderUsesSourceDepth = prog_data->uses_src_depth;
+      psx.PixelShaderUsesSourceW = prog_data->uses_src_w;
+      psx.PixelShaderIsPerSample = prog_data->persample_dispatch;
 
       /* _NEW_MULTISAMPLE | BRW_NEW_CONSERVATIVE_RASTERIZATION */
       if (prog_data->uses_sample_mask) {
 #if GEN_GEN >= 9
-         struct gl_context *ctx = &brw->ctx;
-
          if (prog_data->post_depth_coverage)
-            pse.InputCoverageMaskState = ICMS_DEPTH_COVERAGE;
+            psx.InputCoverageMaskState = ICMS_DEPTH_COVERAGE;
          else if (prog_data->inner_coverage && ctx->IntelConservativeRasterization)
-            pse.InputCoverageMaskState = ICMS_INNER_CONSERVATIVE;
+            psx.InputCoverageMaskState = ICMS_INNER_CONSERVATIVE;
          else
-            pse.InputCoverageMaskState = ICMS_NORMAL;
+            psx.InputCoverageMaskState = ICMS_NORMAL;
 #else
-         pse.PixelShaderUsesInputCoverageMask = true;
+         psx.PixelShaderUsesInputCoverageMask = true;
 #endif
       }
 
-      pse.oMaskPresenttoRenderTarget = prog_data->uses_omask;
+      psx.oMaskPresenttoRenderTarget = prog_data->uses_omask;
 #if GEN_GEN >= 9
-      pse.PixelShaderPullsBary = prog_data->pulls_bary;
+      psx.PixelShaderPullsBary = prog_data->pulls_bary;
+      psx.PixelShaderComputesStencil = prog_data->computed_stencil;
 #endif
 
       /* The stricter cross-primitive coherency guarantees that the hardware
@@ -1706,14 +1707,7 @@ genX(upload_ps_extra)(struct brw_context *brw)
        */
       if ((prog_data->has_side_effects || prog_data->uses_kill) &&
           !brw_color_buffer_write_enabled(brw))
-         pse.PixelShaderHasUAV = true;;
-
-      if (prog_data->computed_stencil) {
-         assert(brw->gen >= 9);
-#if GEN_GEN >= 9
-         pse.PixelShaderComputesStencil = true;
-#endif
-      }
+         psx.PixelShaderHasUAV = true;
    }
 }
 
