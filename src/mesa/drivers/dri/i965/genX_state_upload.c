@@ -996,14 +996,20 @@ genX(upload_vs_state)(struct brw_context *brw)
       brw_vue_prog_data(brw->vs.base.prog_data);
    const struct brw_stage_prog_data *stage_prog_data = &vue_prog_data->base;
 
-#if GEN_GEN >= 8
-   /* _NEW_TRANSFORM */
-   struct gl_context *ctx = &brw->ctx;
-   const struct gl_transform_attrib *transform = &ctx->Transform;
-#endif
-
    assert(vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8 ||
           vue_prog_data->dispatch_mode == DISPATCH_MODE_4X2_DUAL_OBJECT);
+
+   /* From the BSpec, 3D Pipeline > Geometry > Vertex Shader > State,
+    * 3DSTATE_VS, Dword 5.0 "VS Function Enable":
+    *
+    *   [DevSNB] A pipeline flush must be programmed prior to a 3DSTATE_VS
+    *   command that causes the VS Function Enable to toggle. Pipeline
+    *   flush can be executed by sending a PIPE_CONTROL command with CS
+    *   stall bit set and a post sync operation.
+    *
+    * We've already done such a flush at the start of state upload, so we
+    * don't need to do another one here.
+    */
 
 #if GEN_GEN < 7
    brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_VS), cvs) {
@@ -1015,7 +1021,7 @@ genX(upload_vs_state)(struct brw_context *brw)
    }
 #endif
 
-   if (devinfo->is_ivybridge)
+   if (GEN_GEN == 7 && devinfo->is_ivybridge)
       gen7_emit_vs_workaround_flush(brw);
 
    brw_batch_emit(brw, GENX(3DSTATE_VS), vs) {
@@ -1027,13 +1033,29 @@ genX(upload_vs_state)(struct brw_context *brw)
       vs.SIMD8DispatchEnable =
          vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8;
 
-      vs.UserClipDistanceClipTestEnableBitmask = transform->ClipPlanesEnabled;
       vs.UserClipDistanceCullTestEnableBitmask =
          vue_prog_data->cull_distance_mask;
 #endif
    }
 
 #if GEN_GEN < 7
+   /* Based on my reading of the simulator, the VS constants don't get
+    * pulled into the VS FF unit until an appropriate pipeline flush
+    * happens, and instead the 3DSTATE_CONSTANT_VS packet just adds
+    * references to them into a little FIFO.  The flushes are common,
+    * but don't reliably happen between this and a 3DPRIMITIVE, causing
+    * the primitive to use the wrong constants.  Then the FIFO
+    * containing the constant setup gets added to again on the next
+    * constants change, and eventually when a flush does happen the
+    * unit is overwhelmed by constant changes and dies.
+    *
+    * To avoid this, send a PIPE_CONTROL down the line that will
+    * update the unit immediately loading the constants.  The flush
+    * type bits here were those set by the STATE_BASE_ADDRESS whose
+    * move in a82a43e8d99e1715dd11c9c091b5ab734079b6a6 triggered the
+    * bug reports that led to this workaround, and may be more than
+    * what is strictly required to avoid the issue.
+    */
    brw_emit_pipe_control_flush(brw,
                                PIPE_CONTROL_DEPTH_STALL |
                                PIPE_CONTROL_INSTRUCTION_INVALIDATE |
@@ -1043,8 +1065,7 @@ genX(upload_vs_state)(struct brw_context *brw)
 
 static const struct brw_tracked_state genX(vs_state) = {
    .dirty = {
-      .mesa  = _NEW_TRANSFORM |
-               (GEN_GEN < 7 ? _NEW_PROGRAM_CONSTANTS : 0),
+      .mesa  = (GEN_GEN < 7 ? (_NEW_PROGRAM_CONSTANTS | _NEW_TRANSFORM) : 0),
       .brw   = BRW_NEW_BATCH |
                BRW_NEW_BLORP |
                BRW_NEW_CONTEXT |
