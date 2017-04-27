@@ -1677,7 +1677,7 @@ genX(upload_scissor_state)(struct brw_context *brw)
    const bool render_to_fbo = _mesa_is_user_fbo(ctx->DrawBuffer);
    struct GENX(SCISSOR_RECT) scissor;
    uint32_t scissor_state_offset;
-   const unsigned int fb_width= _mesa_geometric_width(ctx->DrawBuffer);
+   const unsigned int fb_width = _mesa_geometric_width(ctx->DrawBuffer);
    const unsigned int fb_height = _mesa_geometric_height(ctx->DrawBuffer);
    uint32_t *scissor_map;
 
@@ -1731,7 +1731,8 @@ genX(upload_scissor_state)(struct brw_context *brw)
          scissor.ScissorRectangleYMax = fb_height - bbox[2] - 1;
       }
 
-      GENX(SCISSOR_RECT_pack)(NULL, scissor_map + i * 2, &scissor);
+      GENX(SCISSOR_RECT_pack)(NULL, scissor_map, &scissor);
+      scissor_map += i * GENX(SCISSOR_RECT_length);
    }
 
    brw_batch_emit(brw, GENX(3DSTATE_SCISSOR_STATE_POINTERS), ptr) {
