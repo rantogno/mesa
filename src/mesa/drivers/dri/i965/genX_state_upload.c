@@ -1296,12 +1296,6 @@ genX(upload_gs_state)(struct brw_context *brw)
       brw_gs_prog_data(stage_prog_data);
 #endif
 
-   /* _NEW_TRANSFORM */
-#if GEN_GEN >= 8
-   struct gl_context *ctx = &brw->ctx;
-   const struct gl_transform_attrib *transform = &ctx->Transform;
-#endif
-
 #if GEN_GEN < 7
    brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_GS), cgs) {
       if (active && stage_state->push_const_size != 0) {
@@ -1310,6 +1304,23 @@ genX(upload_gs_state)(struct brw_context *brw)
          cgs.GSConstantBuffer0ReadLength = stage_state->push_const_size - 1;
       }
    }
+#endif
+
+#if GEN_GEN == 7 && !GEN_IS_HASWELL
+   /**
+    * From Graphics BSpec: 3D-Media-GPGPU Engine > 3D Pipeline Stages >
+    * Geometry > Geometry Shader > State:
+    *
+    *     "Note: Because of corruption in IVB:GT2, software needs to flush the
+    *     whole fixed function pipeline when the GS enable changes value in
+    *     the 3DSTATE_GS."
+    *
+    * The hardware architects have clarified that in this context "flush the
+    * whole fixed function pipeline" means to emit a PIPE_CONTROL with the "CS
+    * Stall" bit set.
+    */
+   if (brw->gt == 2 && brw->gs.enabled != active)
+      gen7_emit_cs_stall_flush(brw);
 #endif
 
    if (active) {
@@ -1330,6 +1341,32 @@ genX(upload_gs_state)(struct brw_context *brw)
          gs.ControlDataFormat = gs_prog_data->control_data_format;
 #endif
 
+         /* Note: the meaning of the GEN7_GS_REORDER_TRAILING bit changes between
+          * Ivy Bridge and Haswell.
+          *
+          * On Ivy Bridge, setting this bit causes the vertices of a triangle
+          * strip to be delivered to the geometry shader in an order that does
+          * not strictly follow the OpenGL spec, but preserves triangle
+          * orientation.  For example, if the vertices are (1, 2, 3, 4, 5), then
+          * the geometry shader sees triangles:
+          *
+          * (1, 2, 3), (2, 4, 3), (3, 4, 5)
+          *
+          * (Clearing the bit is even worse, because it fails to preserve
+          * orientation).
+          *
+          * Triangle strips with adjacency always ordered in a way that preserves
+          * triangle orientation but does not strictly follow the OpenGL spec,
+          * regardless of the setting of this bit.
+          *
+          * On Haswell, both triangle strips and triangle strips with adjacency
+          * are always ordered in a way that preserves triangle orientation.
+          * Setting this bit causes the ordering to strictly follow the OpenGL
+          * spec.
+          *
+          * So in either case we want to set the bit.  Unfortunately on Ivy
+          * Bridge this will get the order close to correct but not perfect.
+          */
          gs.ReorderMode = TRAILING;
          gs.MaximumNumberofThreads =
             GEN_GEN == 8 ? (devinfo->max_gs_threads / 2 - 1)
@@ -1360,8 +1397,6 @@ genX(upload_gs_state)(struct brw_context *brw)
          }
          gs.IncludeVertexHandles = vue_prog_data->include_vue_handles;
 
-         gs.UserClipDistanceClipTestEnableBitmask =
-            transform->ClipPlanesEnabled;
          gs.UserClipDistanceCullTestEnableBitmask =
             vue_prog_data->cull_distance_mask;
 
@@ -1403,8 +1438,7 @@ genX(upload_gs_state)(struct brw_context *brw)
 
 static const struct brw_tracked_state genX(gs_state) = {
    .dirty = {
-      .mesa  = (GEN_GEN < 8 ? _NEW_TRANSFORM : 0) |
-               (GEN_GEN < 7 ? _NEW_PROGRAM_CONSTANTS : 0),
+      .mesa  = (GEN_GEN < 7 ? _NEW_PROGRAM_CONSTANTS : 0),
       .brw   = BRW_NEW_BATCH |
                BRW_NEW_BLORP |
                BRW_NEW_CONTEXT |
@@ -1998,7 +2032,7 @@ genX(upload_hs_state)(struct brw_context *brw)
          hs.InstanceCount = tcs_prog_data->instances - 1;
          hs.IncludeVertexHandles = true;
 
-        hs.MaximumNumberofThreads = devinfo->max_tcs_threads - 1;
+         hs.MaximumNumberofThreads = devinfo->max_tcs_threads - 1;
       }
    }
 }
@@ -2027,12 +2061,6 @@ genX(upload_ds_state)(struct brw_context *brw)
    const struct brw_vue_prog_data *vue_prog_data =
       brw_vue_prog_data(stage_prog_data);
 
-#if GEN_GEN >= 8
-   /* _NEW_TRANSFORM */
-   struct gl_context *ctx = &brw->ctx;
-   const struct gl_transform_attrib *transform = &ctx->Transform;
-#endif
-
    if (!tes_prog_data) {
       brw_batch_emit(brw, GENX(3DSTATE_DS), ds);
    } else {
@@ -2046,8 +2074,6 @@ genX(upload_ds_state)(struct brw_context *brw)
 #if GEN_GEN >= 8
         if (vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8)
            ds.DispatchMode = DISPATCH_MODE_SIMD8_SINGLE_PATCH;
-        ds.UserClipDistanceClipTestEnableBitmask =
-            transform->ClipPlanesEnabled;
         ds.UserClipDistanceCullTestEnableBitmask =
             vue_prog_data->cull_distance_mask;
 #endif
@@ -2057,12 +2083,11 @@ genX(upload_ds_state)(struct brw_context *brw)
 
 static const struct brw_tracked_state genX(ds_state) = {
    .dirty = {
-      .mesa  = (GEN_GEN < 8 ? _NEW_TRANSFORM : 0),
+      .mesa  = 0,
       .brw   = BRW_NEW_BATCH |
                BRW_NEW_BLORP |
                BRW_NEW_TESS_PROGRAMS |
-               BRW_NEW_TES_PROG_DATA |
-               (GEN_GEN < 8 ? BRW_NEW_CONTEXT : 0),
+               BRW_NEW_TES_PROG_DATA,
    },
    .emit = genX(upload_ds_state),
 };
