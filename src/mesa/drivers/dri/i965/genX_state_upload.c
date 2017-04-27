@@ -1764,34 +1764,45 @@ static const struct brw_tracked_state genX(scissor_state) = {
    .emit = genX(upload_scissor_state),
 };
 
-#define GEN7_MOCS_L3                    1
-#define upload_constant_state(brw, stage_state, active, opcode)               \
-   do {                                                                       \
-      uint32_t mocs = brw->gen < 8 ? GEN7_MOCS_L3 : 0;                        \
-      bool active_tmp = active && stage_state->push_const_size != 0;          \
-                                                                              \
-      brw_batch_emit(brw, GENX(opcode), pkt) {                                \
-         if (active_tmp) {                                                    \
-                                                                              \
-            if (brw->gen >= 9) {                                              \
-               pkt.ConstantBody.ConstantBuffer2ReadLength =                   \
-                  stage_state->push_const_size;                               \
-               pkt.ConstantBody.PointerToConstantBuffer2 =                    \
-                  render_ro_bo(                                               \
-                     brw->batch.bo, stage_state->push_const_offset);          \
-            } else {                                                          \
-               pkt.ConstantBody.ConstantBuffer0ReadLength =                   \
-                  stage_state->push_const_size;                               \
-               pkt.ConstantBody.PointerToConstantBuffer0.offset =             \
-                  stage_state->push_const_offset | mocs;                      \
-            }                                                                 \
-         }                                                                    \
-      }                                                                       \
-                                                                              \
-      if (brw->gen >= 9)                                                      \
-         brw->ctx.NewDriverState |= BRW_NEW_SURFACES;                         \
-   } while (0);
+UNUSED static const uint32_t push_constant_opcodes[] = {
+   [MESA_SHADER_VERTEX]                      = 21,
+   [MESA_SHADER_TESS_CTRL]                   = 25, /* HS */
+   [MESA_SHADER_TESS_EVAL]                   = 26, /* DS */
+   [MESA_SHADER_GEOMETRY]                    = 22,
+   [MESA_SHADER_FRAGMENT]                    = 23,
+   [MESA_SHADER_COMPUTE]                     = 0,
+};
 
+#if GEN_GEN >= 7
+static void
+upload_constant_state(struct brw_context *brw,
+                      struct brw_stage_state *stage_state,
+                      bool active, uint32_t stage)
+{
+   UNUSED uint32_t mocs = GEN_GEN < 8 ? GEN7_MOCS_L3 : 0;
+   active = active && stage_state->push_const_size != 0;
+
+   brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_VS), pkt) {
+      pkt._3DCommandSubOpcode = push_constant_opcodes[stage];
+      if (active) {
+#if GEN_GEN >= 9
+         pkt.ConstantBody.ConstantBuffer2ReadLength =
+            stage_state->push_const_size;
+         pkt.ConstantBody.PointerToConstantBuffer2 =
+            render_ro_bo(
+               brw->batch.bo, stage_state->push_const_offset);
+#else
+         pkt.ConstantBody.ConstantBuffer0ReadLength =
+            stage_state->push_const_size;
+         pkt.ConstantBody.PointerToConstantBuffer0.offset =
+            stage_state->push_const_offset | mocs;
+#endif
+      }
+   }
+
+   brw->ctx.NewDriverState |= GEN_GEN >= 9 ? BRW_NEW_SURFACES : 0;
+}
+#endif
 
 static void
 genX(upload_vs_push_constants)(struct brw_context *brw)
@@ -1811,7 +1822,7 @@ genX(upload_vs_push_constants)(struct brw_context *brw)
       gen7_emit_vs_workaround_flush(brw);
 
    upload_constant_state(brw, stage_state, true /* active */,
-                         3DSTATE_CONSTANT_VS);
+                         MESA_SHADER_VERTEX);
 #endif
 }
 
@@ -1845,7 +1856,7 @@ genX(upload_gs_push_constants)(struct brw_context *brw)
    }
 
 #if GEN_GEN >= 7
-   upload_constant_state(brw, stage_state, gp, 3DSTATE_CONSTANT_GS);
+   upload_constant_state(brw, stage_state, gp, MESA_SHADER_GEOMETRY);
 #endif
 }
 
@@ -1876,7 +1887,7 @@ genX(upload_wm_push_constants)(struct brw_context *brw)
    gen6_upload_push_constants(brw, &fp->program, prog_data, stage_state);
 
 #if GEN_GEN >= 7
-   upload_constant_state(brw, stage_state, true, 3DSTATE_CONSTANT_PS);
+   upload_constant_state(brw, stage_state, true, MESA_SHADER_FRAGMENT);
 #endif
 }
 
@@ -2585,7 +2596,7 @@ genX(upload_tes_push_constants)(struct brw_context *brw)
       gen6_upload_push_constants(brw, &tep->program, prog_data, stage_state);
    }
 
-   upload_constant_state(brw, stage_state, tep, 3DSTATE_CONSTANT_DS);
+   upload_constant_state(brw, stage_state, tep, MESA_SHADER_TESS_EVAL);
 }
 
 static const struct brw_tracked_state genX(tes_push_constants) = {
@@ -2616,7 +2627,7 @@ genX(upload_tcs_push_constants)(struct brw_context *brw)
       gen6_upload_push_constants(brw, &tcp->program, prog_data, stage_state);
    }
 
-   upload_constant_state(brw, stage_state, active, 3DSTATE_CONSTANT_HS);
+   upload_constant_state(brw, stage_state, active, MESA_SHADER_TESS_CTRL);
 }
 
 static const struct brw_tracked_state genX(tcs_push_constants) = {
