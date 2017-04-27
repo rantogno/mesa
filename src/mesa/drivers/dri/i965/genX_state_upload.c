@@ -785,17 +785,12 @@ genX(upload_wm)(struct brw_context *brw)
    /* BRW_NEW_FS_PROG_DATA */
    const struct brw_wm_prog_data *wm_prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
-#if GEN_GEN < 8
-   bool writes_depth = wm_prog_data->computed_depth_mode != BRW_PSCDEPTH_OFF;
-   /* _NEW_BUFFERS */
-   const bool multisampled_fbo = _mesa_geometric_samples(ctx->DrawBuffer) > 1;
-#endif
+
+   UNUSED bool writes_depth =
+      wm_prog_data->computed_depth_mode != BRW_PSCDEPTH_OFF;
 
 #if GEN_GEN < 7
    const struct brw_stage_state *stage_state = &brw->wm.base;
-   const bool enable_dual_src_blend = wm_prog_data->dual_src_blend &&
-                                      (ctx->Color.BlendEnabled & 1) &&
-                                      ctx->Color.Blend[0]._UsesDualSrc;
    const struct gen_device_info *devinfo = &brw->screen->devinfo;
 
    /* We can't fold this into gen6_upload_wm_push_constants(), because
@@ -825,11 +820,11 @@ genX(upload_wm)(struct brw_context *brw)
       if (wm_prog_data->base.use_alt_mode)
          wm.FloatingPointMode = Alternate;
 
-      wm.SamplerCount |= ALIGN(stage_state->sampler_count, 4) / 4;
+      wm.SamplerCount = DIV_ROUND_UP(stage_state->sampler_count, 4);
       wm.BindingTableEntryCount = wm_prog_data->base.binding_table.size_bytes / 4;
       wm.MaximumNumberofThreads = devinfo->max_wm_threads - 1;
-      wm._8PixelDispatchEnable = !!wm_prog_data->dispatch_8;
-      wm._16PixelDispatchEnable = !!wm_prog_data->dispatch_16;
+      wm._8PixelDispatchEnable = wm_prog_data->dispatch_8;
+      wm._16PixelDispatchEnable = wm_prog_data->dispatch_16;
       wm.DispatchGRFStartRegisterForConstantSetupData0 =
          wm_prog_data->base.dispatch_grf_start_reg;
       wm.DispatchGRFStartRegisterForConstantSetupData2 =
@@ -837,7 +832,9 @@ genX(upload_wm)(struct brw_context *brw)
       wm.KernelStartPointer0 = stage_state->prog_offset;
       wm.KernelStartPointer2 = stage_state->prog_offset +
          wm_prog_data->prog_offset_2;
-      wm.DualSourceBlendEnable = enable_dual_src_blend;
+      wm.DualSourceBlendEnable =
+         wm_prog_data->dual_src_blend && (ctx->Color.BlendEnabled & 1) &&
+         ctx->Color.Blend[0]._UsesDualSrc;
       wm.oMaskPresenttoRenderTarget = wm_prog_data->uses_omask;
       wm.NumberofSFOutputAttributes = wm_prog_data->num_varying_inputs;
 
@@ -867,9 +864,7 @@ genX(upload_wm)(struct brw_context *brw)
       wm.PixelShaderComputedDepth = writes_depth;
 #endif
 
-#if GEN_GEN >= 8
       wm.PointRasterizationRule = RASTRULE_UPPER_RIGHT;
-#endif
 
       /* _NEW_LINE */
       wm.LineStippleEnable = ctx->Line.StippleFlag;
@@ -879,6 +874,9 @@ genX(upload_wm)(struct brw_context *brw)
       wm.BarycentricInterpolationMode = wm_prog_data->barycentric_interp_modes;
 
 #if GEN_GEN < 8
+      /* _NEW_BUFFERS */
+      const bool multisampled_fbo = _mesa_geometric_samples(ctx->DrawBuffer) > 1;
+
       wm.PixelShaderUsesSourceDepth = wm_prog_data->uses_src_depth;
       wm.PixelShaderUsesSourceW = wm_prog_data->uses_src_w;
       if (wm_prog_data->uses_kill ||
