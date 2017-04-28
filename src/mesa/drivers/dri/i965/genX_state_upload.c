@@ -139,9 +139,6 @@ instruction_bo(struct brw_bo *bo, uint32_t offset)
         _brw_cmd_pack(cmd)(brw, (void *)_dst, &name),              \
         _dst = NULL)
 
-#define SKL_MOCS_WB (2 << 1)
-#define BDW_MOCS_WB 0x78
-
 #if GEN_GEN >= 6
 /**
  * Determine the appropriate attribute override value to store into the
@@ -1038,9 +1035,6 @@ genX(upload_3dstate_so_buffers)(struct brw_context *brw)
 #else
    struct brw_transform_feedback_object *brw_obj =
       (struct brw_transform_feedback_object *) xfb_obj;
-   /* Copy these values from brw_defines.h so we don't have to include the whole
-    * file.
-    */
    uint32_t mocs_wb = brw->gen >= 9 ? SKL_MOCS_WB : BDW_MOCS_WB;
 #endif
 
@@ -1078,18 +1072,17 @@ genX(upload_3dstate_so_buffers)(struct brw_context *brw)
          sob.StreamOutputBufferOffsetAddressEnable = true;
          sob.SOBufferMOCS = mocs_wb;
 
-         sob.SurfaceSize = xfb_obj->Size[i] / 4;
-         if (sob.SurfaceSize > 0)
-            sob.SurfaceSize -= 1;
+         sob.SurfaceSize = MAX2(xfb_obj->Size[i] / 4, 1) - 1;
          sob.StreamOutputBufferOffsetAddress =
             instruction_bo(brw_obj->offset_bo, i * sizeof(uint32_t));
 
-         if (brw_obj->zero_offsets)
+         if (brw_obj->zero_offsets) {
             /* Zero out the offset and write that to offset_bo */
             sob.StreamOffset = 0;
-         else
+         } else {
             /* Use offset_bo as the "Stream Offset." */
             sob.StreamOffset = 0xFFFFFFFF;
+         }
 #endif
       }
    }
@@ -1099,8 +1092,8 @@ genX(upload_3dstate_so_buffers)(struct brw_context *brw)
 #endif
 }
 
-static bool
-genX(query_active)(struct gl_query_object *q)
+static inline bool
+query_active(struct gl_query_object *q)
 {
    return q && q->Active;
 }
@@ -1116,10 +1109,6 @@ genX(upload_3dstate_streamout)(struct brw_context *brw, bool active,
 
    brw_batch_emit(brw, GENX(3DSTATE_STREAMOUT), sos) {
       if (active) {
-#if GEN_GEN >= 8
-         const struct gl_transform_feedback_info *linked_xfb_info =
-            xfb_obj->program->sh.LinkedTransformFeedback;
-#endif
          int urb_entry_read_offset = 0;
          int urb_entry_read_length = (vue_map->num_slots + 1) / 2 -
             urb_entry_read_offset;
@@ -1129,7 +1118,7 @@ genX(upload_3dstate_streamout)(struct brw_context *brw, bool active,
 
          /* BRW_NEW_RASTERIZER_DISCARD */
          if (ctx->RasterDiscard) {
-            if (!genX(query_active)(ctx->Query.PrimitivesGenerated[0])) {
+            if (!query_active(ctx->Query.PrimitivesGenerated[0])) {
                sos.RenderingDisable = true;
             } else {
                perf_debug("Rasterizer discard with a GL_PRIMITIVES_GENERATED "
@@ -1142,16 +1131,22 @@ genX(upload_3dstate_streamout)(struct brw_context *brw, bool active,
             sos.ReorderMode = TRAILING;
 
 #if GEN_GEN < 8
-         if (brw->gen < 8) {
-            if (xfb_obj->Buffers[0])
-               sos.SOBufferEnable0 = true;
-            if (xfb_obj->Buffers[1])
-               sos.SOBufferEnable1 = true;
-            if (xfb_obj->Buffers[2])
-               sos.SOBufferEnable2 = true;
-            if (xfb_obj->Buffers[3])
-               sos.SOBufferEnable3 = true;
-         }
+         sos.SOBufferEnable0 = xfb_obj->Buffers[0] != NULL;
+         sos.SOBufferEnable1 = xfb_obj->Buffers[1] != NULL;
+         sos.SOBufferEnable2 = xfb_obj->Buffers[2] != NULL;
+         sos.SOBufferEnable3 = xfb_obj->Buffers[3] != NULL;
+#else
+         const struct gl_transform_feedback_info *linked_xfb_info =
+            xfb_obj->program->sh.LinkedTransformFeedback;
+         /* Set buffer pitches; 0 means unbound. */
+         if (xfb_obj->Buffers[0])
+            sos.Buffer0SurfacePitch = linked_xfb_info->Buffers[0].Stride * 4;
+         if (xfb_obj->Buffers[1])
+            sos.Buffer1SurfacePitch = linked_xfb_info->Buffers[1].Stride * 4;
+         if (xfb_obj->Buffers[2])
+            sos.Buffer2SurfacePitch = linked_xfb_info->Buffers[2].Stride * 4;
+         if (xfb_obj->Buffers[3])
+            sos.Buffer3SurfacePitch = linked_xfb_info->Buffers[3].Stride * 4;
 #endif
 
          /* We always read the whole vertex.  This could be reduced at some
@@ -1166,18 +1161,6 @@ genX(upload_3dstate_streamout)(struct brw_context *brw, bool active,
          sos.Stream2VertexReadLength = urb_entry_read_length - 1;
          sos.Stream3VertexReadOffset = urb_entry_read_offset;
          sos.Stream3VertexReadLength = urb_entry_read_length - 1;
-
-#if GEN_GEN >= 8
-         /* Set buffer pitches; 0 means unbound. */
-         if (xfb_obj->Buffers[0])
-            sos.Buffer0SurfacePitch = linked_xfb_info->Buffers[0].Stride * 4;
-         if (xfb_obj->Buffers[1])
-            sos.Buffer1SurfacePitch = linked_xfb_info->Buffers[1].Stride * 4;
-         if (xfb_obj->Buffers[2])
-            sos.Buffer2SurfacePitch = linked_xfb_info->Buffers[2].Stride * 4;
-         if (xfb_obj->Buffers[3])
-            sos.Buffer3SurfacePitch = linked_xfb_info->Buffers[3].Stride * 4;
-#endif
       }
    }
 }
