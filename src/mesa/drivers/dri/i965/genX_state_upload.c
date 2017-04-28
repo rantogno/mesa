@@ -1204,17 +1204,19 @@ static const struct brw_tracked_state genX(sol_state) = {
 static void
 genX(upload_ps)(struct brw_context *brw)
 {
+   UNUSED const struct gl_context *ctx = &brw->ctx;
+   UNUSED const struct gen_device_info *devinfo = &brw->screen->devinfo;
+
    /* BRW_NEW_FS_PROG_DATA */
    const struct brw_wm_prog_data *prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
    const struct brw_stage_state *stage_state = &brw->wm.base;
+
 #if GEN_GEN < 8
-   const struct gl_context *ctx = &brw->ctx;
    /* BRW_NEW_FS_PROG_DATA | _NEW_COLOR */
    const bool enable_dual_src_blend = prog_data->dual_src_blend &&
                                       (ctx->Color.BlendEnabled & 1) &&
                                       ctx->Color.Blend[0]._UsesDualSrc;
-   const struct gen_device_info *devinfo = &brw->screen->devinfo;
 #endif
 
    brw_batch_emit(brw, GENX(3DSTATE_PS), ps) {
@@ -1222,9 +1224,8 @@ genX(upload_ps)(struct brw_context *brw)
        * incorrect for subspans where some of the pixels are unlit.  We believe
        * the bit just didn't take effect in previous generations.
        */
-#if GEN_GEN >= 8
-      ps.VectorMaskEnable = true;
-#endif
+      ps.VectorMaskEnable = GEN_GEN >= 8;
+
       ps.SamplerCount =
          DIV_ROUND_UP(CLAMP(stage_state->sampler_count, 0, 16), 4);
 
@@ -1235,7 +1236,9 @@ genX(upload_ps)(struct brw_context *brw)
          ps.FloatingPointMode = Alternate;
 
       /* Haswell requires the sample mask to be set in this packet as well as
-       * in 3DSTATE_SAMPLE_MASK; the values should match. */
+       * in 3DSTATE_SAMPLE_MASK; the values should match.
+       */
+
       /* _NEW_BUFFERS, _NEW_MULTISAMPLE */
 #if GEN_IS_HASWELL
       ps.SampleMask = gen6_determine_sample_mask(brw);
@@ -1296,8 +1299,8 @@ genX(upload_ps)(struct brw_context *brw)
          ps.PositionXYOffsetSelect = POSOFFSET_NONE;
 
       ps.RenderTargetFastClearEnable = brw->wm.fast_clear_op;
-      ps._8PixelDispatchEnable = !!prog_data->dispatch_8;
-      ps._16PixelDispatchEnable = !!prog_data->dispatch_16;
+      ps._8PixelDispatchEnable = prog_data->dispatch_8;
+      ps._16PixelDispatchEnable = prog_data->dispatch_16;
       ps.DispatchGRFStartRegisterForConstantSetupData0 =
          prog_data->base.dispatch_grf_start_reg;
       ps.DispatchGRFStartRegisterForConstantSetupData2 =
