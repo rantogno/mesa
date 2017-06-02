@@ -34,6 +34,7 @@
 #include "brw_state.h"
 #include "brw_defines.h"
 #include "brw_util.h"
+#include "main/glformats.h"
 #include "main/macros.h"
 #include "main/stencil.h"
 #include "intel_batchbuffer.h"
@@ -122,23 +123,25 @@ static void upload_cc_unit(struct brw_context *brw)
       GLenum srcA = ctx->Color.Blend[0].SrcA;
       GLenum dstA = ctx->Color.Blend[0].DstA;
 
-      /* If the renderbuffer is XRGB, we have to frob the blend function to
-       * force the destination alpha to 1.0.  This means replacing GL_DST_ALPHA
-       * with GL_ONE and GL_ONE_MINUS_DST_ALPHA with GL_ZERO.
-       */
-      if (ctx->DrawBuffer->Visual.alphaBits == 0) {
-	 srcRGB = brw_fix_xRGB_alpha(srcRGB);
-	 srcA   = brw_fix_xRGB_alpha(srcA);
-	 dstRGB = brw_fix_xRGB_alpha(dstRGB);
-	 dstA   = brw_fix_xRGB_alpha(dstA);
-      }
-
       if (eqRGB == GL_MIN || eqRGB == GL_MAX) {
 	 srcRGB = dstRGB = GL_ONE;
       }
 
       if (eqA == GL_MIN || eqA == GL_MAX) {
 	 srcA = dstA = GL_ONE;
+      }
+
+      /* If the renderbuffer is XRGB, we have to frob the blend function to
+       * force the destination alpha to 1.0.  This means replacing GL_DST_ALPHA
+       * with GL_ONE and GL_ONE_MINUS_DST_ALPHA with GL_ZERO.
+       */
+      const struct gl_renderbuffer *rb = ctx->DrawBuffer->_ColorDrawBuffers[0];
+      if (rb && !_mesa_base_format_has_channel(rb->_BaseFormat,
+                                               GL_TEXTURE_ALPHA_TYPE)) {
+	 srcRGB = brw_fix_xRGB_alpha(srcRGB);
+	 srcA   = brw_fix_xRGB_alpha(srcA);
+	 dstRGB = brw_fix_xRGB_alpha(dstRGB);
+	 dstA   = brw_fix_xRGB_alpha(dstA);
       }
 
       cc->cc6.dest_blend_factor = brw_translate_blend_factor(dstRGB);
