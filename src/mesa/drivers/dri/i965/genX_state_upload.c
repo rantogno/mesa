@@ -2354,7 +2354,7 @@ genX(upload_gs_state)(struct brw_context *brw)
       brw_gs_prog_data(stage_prog_data);
 #endif
 
-#if GEN_GEN < 7
+#if GEN_GEN == 6
    brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_GS), cgs) {
       if (active && stage_state->push_const_size != 0) {
          cgs.Buffer0Valid = true;
@@ -2489,7 +2489,7 @@ genX(upload_gs_state)(struct brw_context *brw)
 #endif
       }
    }
-#if GEN_GEN < 7
+#if GEN_GEN == 6
    brw->gs.enabled = active;
 #endif
 }
