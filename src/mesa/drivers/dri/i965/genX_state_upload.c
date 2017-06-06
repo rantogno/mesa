@@ -2381,8 +2381,8 @@ genX(upload_gs_state)(struct brw_context *brw)
       gen7_emit_cs_stall_flush(brw);
 #endif
 
-   if (active) {
-      brw_batch_emit(brw, GENX(3DSTATE_GS), gs) {
+   brw_batch_emit(brw, GENX(3DSTATE_GS), gs) {
+      if (active) {
          INIT_THREAD_DISPATCH_FIELDS(gs, Vertex);
 
 #if GEN_GEN >= 7
@@ -2466,13 +2466,12 @@ genX(upload_gs_state)(struct brw_context *brw)
          gs.VertexURBEntryOutputReadOffset = urb_entry_write_offset;
          gs.VertexURBEntryOutputLength = MAX2(urb_entry_output_length, 1);
 #endif
-      }
 #if GEN_GEN < 7
-   } else if (brw->ff_gs.prog_active)  {
-      /* In gen6, transform feedback for the VS stage is done with an ad-hoc GS
-       * program. This function provides the needed 3DSTATE_GS for this.
-       */
-      brw_batch_emit(brw, GENX(3DSTATE_GS), gs) {
+      } else if (brw->ff_gs.prog_active) {
+         /* In gen6, transform feedback for the VS stage is done with an
+          * ad-hoc GS program. This function provides the needed 3DSTATE_GS
+          * for this.
+          */
          gs.KernelStartPointer = KSP(brw, brw->ff_gs.prog_offset);
          gs.SingleProgramFlow = true;
          gs.VectorMaskEnable = true;
@@ -2487,10 +2486,8 @@ genX(upload_gs_state)(struct brw_context *brw)
          gs.SVBIPostIncrementValue =
             brw->ff_gs.prog_data->svbi_postincrement_value;
          gs.Enable = true;
-      }
 #endif
-   } else {
-      brw_batch_emit(brw, GENX(3DSTATE_GS), gs) {
+      } else {
          gs.StatisticsEnable = true;
 #if GEN_GEN < 7
          gs.RenderingEnabled = true;
@@ -2504,6 +2501,7 @@ genX(upload_gs_state)(struct brw_context *brw)
 #endif
       }
    }
+
 #if GEN_GEN == 6
    brw->gs.enabled = active;
 #endif
