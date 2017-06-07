@@ -1267,25 +1267,103 @@ static const struct brw_tracked_state genX(depth_stencil_state) = {
 
 /* ---------------------------------------------------------------------- */
 
-#if GEN_GEN >= 6
 static void
 genX(upload_clip_state)(struct brw_context *brw)
 {
    struct gl_context *ctx = &brw->ctx;
 
    /* _NEW_BUFFERS */
-   struct gl_framebuffer *fb = ctx->DrawBuffer;
+   UNUSED struct gl_framebuffer *fb = ctx->DrawBuffer;
 
    /* BRW_NEW_FS_PROG_DATA */
-   struct brw_wm_prog_data *wm_prog_data =
+   UNUSED struct brw_wm_prog_data *wm_prog_data =
       brw_wm_prog_data(brw->wm.base.prog_data);
 
+#if GEN_GEN >= 6
    brw_batch_emit(brw, GENX(3DSTATE_CLIP), clip) {
+#else
+   ctx->NewDriverState |= BRW_NEW_GEN4_UNIT_STATE;
+   brw_state_emit(brw, GENX(CLIP_STATE), 32, &brw->clip.state_offset, clip) {
+#endif
+
+#if GEN_GEN <= 5
+      clip.KernelStartPointer = KSP_ro(brw, brw->clip.prog_offset);
+      clip.GRFRegisterCount =
+         DIV_ROUND_UP(brw->clip.prog_data->total_grf, 16) - 1;
+      clip.FloatingPointMode = FLOATING_POINT_MODE_Alternate;
+      clip.SingleProgramFlow = true;
+      clip.VertexURBEntryReadLength = brw->clip.prog_data->urb_read_length;
+      clip.ConstantURBEntryReadLength = brw->clip.prog_data->curb_read_length;
+
+      /* BRW_NEW_PUSH_CONSTANT_ALLOCATION */
+      clip.ConstantURBEntryReadOffset = brw->curbe.clip_start * 2;
+      clip.DispatchGRFStartRegisterForURBData = 1;
+      clip.VertexURBEntryReadOffset = 0;
+
+      /* BRW_NEW_URB_FENCE */
+      clip.NumberofURBEntries = brw->urb.nr_clip_entries;
+      clip.URBEntryAllocationSize = brw->urb.vsize - 1;
+
+      if (brw->urb.nr_clip_entries >= 10) {
+         /* Half of the URB entries go to each thread, and it has to be an
+          * even number.
+          */
+         assert(brw->urb.nr_clip_entries % 2 == 0);
+
+         /* Although up to 16 concurrent Clip threads are allowed on Ironlake,
+          * only 2 threads can output VUEs at a time.
+          */
+         clip.MaximumNumberofThreads = GEN_GEN == 5 ? 16 - 1 : 2 - 1;
+      } else {
+         assert(brw->urb.nr_clip_entries >= 5);
+         clip.MaximumNumberofThreads = 1 - 1;
+      }
+
+      clip.VertexPositionSpace = VPOS_NDCSPACE;
+      clip.UserClipFlagsMustClipEnable = true;
+      clip.GuardbandClipTestEnable = true;
+
+      clip.ClipperViewportStatePointer =
+         instruction_ro_bo(brw->batch.bo, brw->clip.vp_offset);
+
+      clip.ScreenSpaceViewportXMin = -1;
+      clip.ScreenSpaceViewportXMax = 1;
+      clip.ScreenSpaceViewportYMin = -1;
+      clip.ScreenSpaceViewportYMax = 1;
+#else
+      /* _NEW_LIGHT */
+      if (ctx->Light.ProvokingVertex == GL_FIRST_VERTEX_CONVENTION) {
+         clip.TriangleStripListProvokingVertexSelect = 0;
+         clip.TriangleFanProvokingVertexSelect = 1;
+         clip.LineStripListProvokingVertexSelect = 0;
+      } else {
+         clip.TriangleStripListProvokingVertexSelect = 2;
+         clip.TriangleFanProvokingVertexSelect = 2;
+         clip.LineStripListProvokingVertexSelect = 1;
+      }
+
       clip.StatisticsEnable = !brw->meta_in_progress;
 
       if (wm_prog_data->barycentric_interp_modes &
           BRW_BARYCENTRIC_NONPERSPECTIVE_BITS)
          clip.NonPerspectiveBarycentricEnable = true;
+
+      clip.ClipEnable = brw->primitive != _3DPRIM_RECTLIST;
+
+      clip.MinimumPointWidth = 0.125;
+      clip.MaximumPointWidth = 255.875;
+
+      /* BRW_NEW_VIEWPORT_COUNT */
+      const unsigned viewport_count = brw->clip.viewport_count;
+      clip.MaximumVPIndex = viewport_count - 1;
+      if (_mesa_geometric_layers(fb) == 0)
+         clip.ForceZeroRTAIndexEnable = true;
+
+#if GEN_GEN <= 8
+      clip.UserClipDistanceCullTestEnableBitmask =
+         brw_vue_prog_data(brw->vs.base.prog_data)->cull_distance_mask;
+#endif
+#endif
 
 #if GEN_GEN >= 7
       clip.EarlyCullEnable = true;
@@ -1314,26 +1392,17 @@ genX(upload_clip_state)(struct brw_context *brw)
 #endif
 
 #if GEN_GEN < 8
-      clip.UserClipDistanceCullTestEnableBitmask =
-         brw_vue_prog_data(brw->vs.base.prog_data)->cull_distance_mask;
-
       clip.ViewportZClipTestEnable = !ctx->Transform.DepthClamp;
 #endif
 
-      /* _NEW_LIGHT */
-      if (ctx->Light.ProvokingVertex == GL_FIRST_VERTEX_CONVENTION) {
-         clip.TriangleStripListProvokingVertexSelect = 0;
-         clip.TriangleFanProvokingVertexSelect = 1;
-         clip.LineStripListProvokingVertexSelect = 0;
-      } else {
-         clip.TriangleStripListProvokingVertexSelect = 2;
-         clip.TriangleFanProvokingVertexSelect = 2;
-         clip.LineStripListProvokingVertexSelect = 1;
-      }
-
       /* _NEW_TRANSFORM */
-      clip.UserClipDistanceClipTestEnableBitmask =
-         ctx->Transform.ClipPlanesEnabled;
+      if (GEN_GEN >= 5 || GEN_IS_G4X) {
+         clip.UserClipDistanceClipTestEnableBitmask =
+            ctx->Transform.ClipPlanesEnabled;
+      } else {
+         clip.UserClipDistanceClipTestEnableBitmask =
+            (ctx->Transform.ClipPlanesEnabled & 0x3f) | 0x40;
+      }
 
 #if GEN_GEN >= 8
       clip.ForceUserClipDistanceClipTestEnableBitmask = true;
@@ -1346,10 +1415,9 @@ genX(upload_clip_state)(struct brw_context *brw)
 
       clip.GuardbandClipTestEnable = true;
 
-      /* BRW_NEW_VIEWPORT_COUNT */
-      const unsigned viewport_count = brw->clip.viewport_count;
-
-      if (ctx->RasterDiscard) {
+      if (GEN_GEN <= 5) {
+         clip.ClipMode = brw->clip.prog_data->clip_mode;
+      } else if (ctx->RasterDiscard) {
          clip.ClipMode = CLIPMODE_REJECT_ALL;
 #if GEN_GEN == 6
          perf_debug("Rasterizer discard is currently implemented via the "
@@ -1360,42 +1428,48 @@ genX(upload_clip_state)(struct brw_context *brw)
          clip.ClipMode = CLIPMODE_NORMAL;
       }
 
-      clip.ClipEnable = brw->primitive != _3DPRIM_RECTLIST;
+#if GEN_IS_G4X
+      clip.NegativeWClipTestEnable = true;
+#endif
 
       /* _NEW_POLYGON,
        * BRW_NEW_GEOMETRY_PROGRAM | BRW_NEW_TES_PROG_DATA | BRW_NEW_PRIMITIVE
        */
-      if (!brw_is_drawing_points(brw) && !brw_is_drawing_lines(brw))
+      if (GEN_GEN <= 5 ||
+          (!brw_is_drawing_points(brw) && !brw_is_drawing_lines(brw)))
          clip.ViewportXYClipTestEnable = true;
-
-      clip.MinimumPointWidth = 0.125;
-      clip.MaximumPointWidth = 255.875;
-      clip.MaximumVPIndex = viewport_count - 1;
-      if (_mesa_geometric_layers(fb) == 0)
-         clip.ForceZeroRTAIndexEnable = true;
    }
 }
 
 static const struct brw_tracked_state genX(clip_state) = {
    .dirty = {
-      .mesa  = _NEW_BUFFERS |
-               _NEW_LIGHT |
-               _NEW_POLYGON |
-               _NEW_TRANSFORM,
+      .mesa  = _NEW_TRANSFORM |
+               (GEN_GEN <= 5 ? _NEW_VIEWPORT : 0) |
+               (GEN_GEN >= 6 ? _NEW_BUFFERS |
+                               _NEW_LIGHT |
+                               _NEW_POLYGON
+                             : 0),
       .brw   = BRW_NEW_BLORP |
-               BRW_NEW_CONTEXT |
-               BRW_NEW_FS_PROG_DATA |
-               BRW_NEW_GS_PROG_DATA |
-               BRW_NEW_VS_PROG_DATA |
-               BRW_NEW_META_IN_PROGRESS |
-               BRW_NEW_PRIMITIVE |
-               BRW_NEW_RASTERIZER_DISCARD |
-               BRW_NEW_TES_PROG_DATA |
-               BRW_NEW_VIEWPORT_COUNT,
+               (GEN_GEN <= 5 ? BRW_NEW_BATCH |
+                               BRW_NEW_BLORP |
+                               BRW_NEW_CLIP_PROG_DATA |
+                               BRW_NEW_PUSH_CONSTANT_ALLOCATION |
+                               BRW_NEW_PROGRAM_CACHE |
+                               BRW_NEW_URB_FENCE
+                             : 0) |
+               (GEN_GEN >= 6 ? BRW_NEW_CONTEXT |
+                               BRW_NEW_FS_PROG_DATA |
+                               BRW_NEW_GS_PROG_DATA |
+                               BRW_NEW_VS_PROG_DATA |
+                               BRW_NEW_META_IN_PROGRESS |
+                               BRW_NEW_PRIMITIVE |
+                               BRW_NEW_RASTERIZER_DISCARD |
+                               BRW_NEW_TES_PROG_DATA |
+                               BRW_NEW_VIEWPORT_COUNT
+                             : 0),
    },
    .emit = genX(upload_clip_state),
 };
-#endif
 
 /* ---------------------------------------------------------------------- */
 
@@ -4405,7 +4479,7 @@ genX(init_atoms)(struct brw_context *brw)
       &genX(sf_clip_viewport),
       &genX(sf_state),
       &genX(vs_state), /* always required, enabled or not */
-      &brw_clip_unit,
+      &genX(clip_state),
       &genX(gs_state),
 
       /* Command packets:
