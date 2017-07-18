@@ -256,11 +256,10 @@ want_depth_pma_fix(struct anv_cmd_buffer *cmd_buffer)
           wm_prog_data->computed_depth_mode != PSCDEPTH_OFF;
 }
 
+#if GEN_GEN == 9
 UNUSED static bool
 want_stencil_pma_fix(struct anv_cmd_buffer *cmd_buffer)
 {
-   assert(GEN_GEN == 9);
-
    /* From the Skylake PRM Vol. 2c CACHE_MODE_1::STC PMA Optimization Enable:
     *
     *    Clearing this bit will force the STC cache to wait for pending
@@ -375,6 +374,7 @@ want_stencil_pma_fix(struct anv_cmd_buffer *cmd_buffer)
    return pipeline->kill_pixel ||
           wm_prog_data->computed_depth_mode != PSCDEPTH_OFF;
 }
+#endif
 
 void
 genX(cmd_buffer_flush_dynamic_state)(struct anv_cmd_buffer *cmd_buffer)
@@ -525,8 +525,10 @@ genX(cmd_buffer_flush_dynamic_state)(struct anv_cmd_buffer *cmd_buffer)
       anv_batch_emit_merge(&cmd_buffer->batch, dwords,
                            pipeline->gen9.wm_depth_stencil);
 
+#if GEN_GEN == 9
       genX(cmd_buffer_enable_pma_fix)(cmd_buffer,
                                       want_stencil_pma_fix(cmd_buffer));
+#endif
    }
 #endif
 
