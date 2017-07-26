@@ -2201,6 +2201,7 @@ static enum isl_format
 get_ccs_compatible_uint_format(const struct isl_format_layout *fmtl)
 {
    switch (fmtl->format) {
+   case ISL_FORMAT_R32G32B32X32_FLOAT:
    case ISL_FORMAT_R32G32B32A32_FLOAT:
    case ISL_FORMAT_R32G32B32A32_SINT:
    case ISL_FORMAT_R32G32B32A32_UINT:
