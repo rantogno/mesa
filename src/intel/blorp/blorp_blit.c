@@ -880,7 +880,7 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
 {
    assert(key->texture_data_type == nir_type_uint);
 
-   if (key->dst_bpc > key->src_bpc) {
+   if (key->dst_bpc[0] > key->src_bpc[0]) {
       nir_ssa_def *u = nir_ssa_undef(b, 1, 32);
       nir_ssa_def *dst_chan[2] = { u, u };
       unsigned shift = 0;
@@ -894,8 +894,8 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
             dst_chan[dst_idx] = nir_ior(b, dst_chan[dst_idx], shifted);
          }
 
-         shift += key->src_bpc;
-         if (shift >= key->dst_bpc) {
+         shift += key->src_bpc[0];
+         if (shift >= key->dst_bpc[0]) {
             dst_idx++;
             shift = 0;
          }
@@ -903,9 +903,9 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
 
       return nir_vec4(b, dst_chan[0], dst_chan[1], u, u);
    } else {
-      assert(key->dst_bpc < key->src_bpc);
+      assert(key->dst_bpc[0] < key->src_bpc[0]);
 
-      nir_ssa_def *mask = nir_imm_int(b, ~0u >> (32 - key->dst_bpc));
+      nir_ssa_def *mask = nir_imm_int(b, ~0u >> (32 - key->dst_bpc[0]));
 
       nir_ssa_def *dst_chan[4];
       unsigned src_idx = 0;
@@ -914,8 +914,8 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
          dst_chan[i] = nir_iand(b, nir_ushr(b, nir_channel(b, color, src_idx),
                                                nir_imm_int(b, shift)),
                                    mask);
-         shift += key->dst_bpc;
-         if (shift >= key->src_bpc) {
+         shift += key->dst_bpc[0];
+         if (shift >= key->src_bpc[0]) {
             src_idx++;
             shift = 0;
          }
@@ -1267,7 +1267,7 @@ brw_blorp_build_nir_shader(struct blorp_context *blorp, void *mem_ctx,
       }
    }
 
-   if (key->dst_bpc != key->src_bpc)
+   if (key->dst_bpc[0] != key->src_bpc[0])
       color = bit_cast_color(&b, color, key);
 
    if (key->dst_rgb) {
@@ -2472,10 +2472,8 @@ blorp_copy(struct blorp_batch *batch,
          bitcast_color_value_to_uint(params.dst.clear_color, dst_fmtl);
    }
 
-   wm_prog_key.src_bpc =
-      isl_format_get_layout(params.src.view.format)->channels.r.bits;
-   wm_prog_key.dst_bpc =
-      isl_format_get_layout(params.dst.view.format)->channels.r.bits;
+   memcpy(wm_prog_key.src_bpc, isl_format_get_bpc(params.src.view.format), 4);
+   memcpy(wm_prog_key.dst_bpc, isl_format_get_bpc(params.dst.view.format), 4);
 
    if (src_fmtl->bw > 1 || src_fmtl->bh > 1) {
       surf_convert_to_uncompressed(batch->blorp->isl_dev, &params.src,
