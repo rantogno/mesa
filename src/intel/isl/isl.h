@@ -1389,6 +1389,14 @@ isl_format_get_name(enum isl_format fmt)
    return isl_format_layouts[fmt].name;
 }
 
+#define isl_format_get_bpc(fmt)    \
+(uint8_t [4]) {                                  \
+   isl_format_layouts[fmt].channels.r.bits, \
+   isl_format_layouts[fmt].channels.g.bits, \
+   isl_format_layouts[fmt].channels.b.bits, \
+   isl_format_layouts[fmt].channels.a.bits, \
+}
+
 bool isl_format_supports_rendering(const struct gen_device_info *devinfo,
                                    enum isl_format format);
 bool isl_format_supports_alpha_blending(const struct gen_device_info *devinfo,
