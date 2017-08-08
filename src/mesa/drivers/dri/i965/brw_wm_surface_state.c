@@ -198,10 +198,14 @@ brw_emit_surface_state(struct brw_context *brw,
        */
       assert((aux_offset & 0xfff) == 0);
       uint32_t *aux_addr = state + brw->isl_dev.ss.aux_addr_offset;
+      /* First save whatever content was on the lower 12 bits (the others are
+       * zeroed anyway). On gen8+, this will be all 0.
+       */
+      uint32_t lower_bits = *aux_addr;
       *aux_addr = brw_emit_reloc(&brw->batch,
                                  *surf_offset +
                                  brw->isl_dev.ss.aux_addr_offset,
-                                 aux_bo, *aux_addr,
+                                 aux_bo, aux_offset + lower_bits,
                                  reloc_flags);
    }
 }
