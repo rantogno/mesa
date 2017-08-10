@@ -1238,10 +1238,16 @@ blorp_emit_surface_state(struct blorp_batch *batch,
    const uint32_t mocs =
       is_render_target ? batch->blorp->mocs.rb : batch->blorp->mocs.tex;
 
+   bool use_clear_address = GEN_GEN >= 10 && aux_usage != ISL_AUX_USAGE_NONE;
+   uint32_t clear_offset =
+      use_clear_address ? surface->aux_addr.offset + surface->aux_surf.size : 0;
+
    isl_surf_fill_state(batch->blorp->isl_dev, state,
                        .surf = &surf, .view = &surface->view,
                        .aux_surf = &surface->aux_surf, .aux_usage = aux_usage,
                        .mocs = mocs, .clear_color = surface->clear_color,
+                       .use_clear_address = use_clear_address,
+                       .clear_address = clear_offset,
                        .write_disables = write_disable_mask);
 
    blorp_surface_reloc(batch, state_offset + isl_dev->ss.addr_offset,
@@ -1256,6 +1262,15 @@ blorp_emit_surface_state(struct blorp_batch *batch,
       uint32_t *aux_addr = state + isl_dev->ss.aux_addr_offset;
       blorp_surface_reloc(batch, state_offset + isl_dev->ss.aux_addr_offset,
                           surface->aux_addr, *aux_addr);
+   }
+
+   if (use_clear_address) {
+      assert((clear_offset & 0x3f) == 0);
+      /* uint32_t *clear_addr = state + isl_dev->ss.clear_value_offset; */
+      struct blorp_address clear_address = surface->aux_addr;
+      clear_address.offset = clear_offset;
+      blorp_surface_reloc(batch, state_offset + isl_dev->ss.clear_value_offset,
+                          clear_address, 0);
    }
 
    blorp_flush_range(batch, state, GENX(RENDER_SURFACE_STATE_length) * 4);
