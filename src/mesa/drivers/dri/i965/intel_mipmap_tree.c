@@ -1659,6 +1659,21 @@ intel_miptree_init_mcs(struct brw_context *brw,
    brw_bo_unmap(mt->mcs_buf->bo);
 }
 
+static unsigned
+fast_clear_state_entry_size(const struct brw_context *brw)
+{
+   assert(brw);
+
+   /* Entry contents:
+    *   +--------------------------------------------+
+    *   | clear value dword(s)                       |
+    *   +--------------------------------------------+
+    */
+   assert(brw->isl_dev.ss.clear_value_size % 4 == 0);
+
+   return brw->isl_dev.ss.clear_value_size;
+}
+
 static struct intel_miptree_aux_buffer *
 intel_alloc_aux_buffer(struct brw_context *brw,
                        const char *name,
@@ -1671,6 +1686,16 @@ intel_alloc_aux_buffer(struct brw_context *brw,
       return false;
 
    buf->size = aux_surf->size;
+
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
+   if (devinfo->gen >= 10) {
+      /* On CNL, instead of setting the clear color in the SURFACE_STATE, we
+       * will set a pointer to a dword somewhere that contains the color. So,
+       * allocate the space for the clear color value here on the aux buffer.
+       */
+      buf->size += fast_clear_state_entry_size(brw);
+   }
+
    buf->pitch = aux_surf->row_pitch;
    buf->qpitch = isl_surf_get_array_pitch_sa_rows(aux_surf);
 
