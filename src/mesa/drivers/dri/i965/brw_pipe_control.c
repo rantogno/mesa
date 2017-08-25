@@ -109,6 +109,16 @@ brw_emit_pipe_control(struct brw_context *brw, uint32_t flags,
          brw_emit_pipe_control_flush(brw, 0);
       }
 
+      if (devinfo->gen == 10 &&
+          (flags & PIPE_CONTROL_RENDER_TARGET_FLUSH)) {
+         /* Hardware workaround: CNL
+          *
+          * Emit Pipe Control with the Pipe Control Flush Enable bit set before
+          * emitting a Pipe Control the with Render Target Cache Flush bit set.
+          */
+         brw_emit_pipe_control_flush(brw, PIPE_CONTROL_FLUSH_ENABLE);
+      }
+
       BEGIN_BATCH(6);
       OUT_BATCH(_3DSTATE_PIPE_CONTROL | (6 - 2));
       OUT_BATCH(flags);
