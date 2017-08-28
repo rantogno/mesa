@@ -555,6 +555,35 @@ init_fast_clear_state_entry(struct anv_cmd_buffer *cmd_buffer,
    }
 }
 
+static void
+store_fast_clear_state_entry(struct anv_cmd_buffer *cmd_buffer,
+                             const struct anv_image *image,
+                             unsigned level,
+                             union isl_color_value clear_color)
+{
+   if (anv_image_aux_levels(image) == 0)
+      return;
+
+   assert(cmd_buffer && image);
+   assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+   assert(level < anv_image_aux_levels(image));
+
+   assert(GEN_GEN >= 10);
+
+   unsigned i = 0;
+   for (; i * 4 < cmd_buffer->device->isl_dev.ss.clear_value_size; i++) {
+      anv_batch_emit(&cmd_buffer->batch, GENX(MI_STORE_DATA_IMM), sdi) {
+         const uint32_t entry_offset =
+            get_fast_clear_state_offset(cmd_buffer->device, image, level,
+                                        FAST_CLEAR_STATE_FIELD_CLEAR_COLOR);
+         sdi.Address =
+            (struct anv_address) { image->bo, entry_offset + i * 4 };
+         sdi.ImmediateData = clear_color.u32[i];
+      }
+   }
+}
+
+
 /* Copy the fast-clear value dword(s) between a surface state object and an
  * image's fast clear state buffer.
  */
@@ -608,9 +637,6 @@ add_clear_relocs(struct anv_cmd_buffer * const cmd_buffer,
                  const struct anv_state state)
 {
    const struct isl_device *isl_dev = &cmd_buffer->device->isl_dev;
-
-   if (image->aux_usage == ISL_AUX_USAGE_NONE)
-      return;
 
    /* Make sure the offset is aligned with a cacheline. */
    uint32_t clear_offset =
@@ -816,10 +842,12 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
                        image->aux_usage == ISL_AUX_USAGE_CCS_E ?
                        ISL_AUX_USAGE_CCS_E : ISL_AUX_USAGE_CCS_D,
                        surface_state);
-      anv_state_flush(cmd_buffer->device, surface_state);
-      if (GEN_GEN >= 10) {
+      if (GEN_GEN >= 10)
          add_clear_relocs(cmd_buffer, image, level, surface_state);
-      } else {
+
+      anv_state_flush(cmd_buffer->device, surface_state);
+
+      if (GEN_GEN < 10) {
          genX(copy_fast_clear_dwords)(cmd_buffer, surface_state, image, level,
                                       false /* copy to ss */);
       }
@@ -960,6 +988,10 @@ genX(cmd_buffer_setup_attachments)(struct anv_cmd_buffer *cmd_buffer,
             add_image_relocs(cmd_buffer, iview->image, iview->aspect_mask,
                              state->attachments[i].aux_usage,
                              state->attachments[i].color_rt_state);
+            if (GEN_GEN >= 10) {
+               store_fast_clear_state_entry(cmd_buffer, iview->image, 0,
+                                            clear_color);
+            }
          } else {
             /* This field will be initialized after the first subpass
              * transition.
@@ -984,6 +1016,10 @@ genX(cmd_buffer_setup_attachments)(struct anv_cmd_buffer *cmd_buffer,
             add_image_relocs(cmd_buffer, iview->image, iview->aspect_mask,
                              state->attachments[i].input_aux_usage,
                              state->attachments[i].input_att_state);
+            if (GEN_GEN >= 10) {
+               store_fast_clear_state_entry(cmd_buffer, iview->image, 0,
+                                            clear_color);
+            }
          }
       }
 
@@ -2980,9 +3016,12 @@ cmd_buffer_subpass_sync_fast_clear_values(struct anv_cmd_buffer *cmd_buffer)
        */
       if (att_state->pending_clear_aspects && att_state->fast_clear) {
          /* Update the fast clear state entry. */
-         genX(copy_fast_clear_dwords)(cmd_buffer, att_state->color_rt_state,
-                                      iview->image, iview->isl.base_level,
-                                      true /* copy from ss */);
+         if (GEN_GEN < 10) {
+            genX(copy_fast_clear_dwords)(cmd_buffer,
+                                         att_state->color_rt_state,
+                                         iview->image, iview->isl.base_level,
+                                         true /* copy from ss */);
+         }
 
          /* Fast-clears impact whether or not a resolve will be necessary. */
          if (iview->image->aux_usage == ISL_AUX_USAGE_CCS_E &&
@@ -2998,7 +3037,7 @@ cmd_buffer_subpass_sync_fast_clear_values(struct anv_cmd_buffer *cmd_buffer)
             genX(set_image_needs_resolve)(cmd_buffer, iview->image,
                                           iview->isl.base_level, true);
          }
-      } else if (rp_att->load_op == VK_ATTACHMENT_LOAD_OP_LOAD) {
+      } else if (GEN_GEN < 10 && rp_att->load_op == VK_ATTACHMENT_LOAD_OP_LOAD) {
          /* The attachment may have been fast-cleared in a previous render
           * pass and the value is needed now. Update the surface state(s).
           *
