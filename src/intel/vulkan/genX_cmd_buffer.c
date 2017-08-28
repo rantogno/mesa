@@ -604,6 +604,33 @@ genX(copy_fast_clear_dwords)(struct anv_cmd_buffer *cmd_buffer,
    }
 }
 
+static void
+add_clear_relocs(struct anv_cmd_buffer * const cmd_buffer,
+                 const struct anv_image * const image,
+                 unsigned level,
+                 const struct anv_state state)
+{
+   const struct isl_device *isl_dev = &cmd_buffer->device->isl_dev;
+
+   if (image->aux_usage == ISL_AUX_USAGE_NONE)
+      return;
+
+   /* Make sure the offset is aligned with a cacheline. */
+   uint32_t clear_offset =
+      get_fast_clear_state_offset(cmd_buffer->device, image, level,
+                                  FAST_CLEAR_STATE_FIELD_CLEAR_COLOR);
+   assert((clear_offset & 0x3f) == 0);
+
+   VkResult result =
+      anv_reloc_list_add(&cmd_buffer->surface_relocs,
+                         &cmd_buffer->pool->alloc,
+                         state.offset + isl_dev->ss.clear_value_offset,
+                         image->bo, clear_offset);
+
+   if (result != VK_SUCCESS)
+      anv_batch_set_error(&cmd_buffer->batch, result);
+}
+
 /**
  * @brief Transitions a color buffer from one layout to another.
  *
@@ -786,14 +813,19 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
                           .aux_surf = &image->aux_surface.isl,
                           .aux_usage = image->aux_usage == ISL_AUX_USAGE_NONE ?
                                        ISL_AUX_USAGE_CCS_D : image->aux_usage,
+                          .use_clear_address = GEN_GEN >= 10 ? true : false,
                           .mocs = cmd_buffer->device->default_mocs);
       add_image_relocs(cmd_buffer, image, VK_IMAGE_ASPECT_COLOR_BIT,
                        image->aux_usage == ISL_AUX_USAGE_CCS_E ?
                        ISL_AUX_USAGE_CCS_E : ISL_AUX_USAGE_CCS_D,
                        surface_state);
       anv_state_flush(cmd_buffer->device, surface_state);
-      genX(copy_fast_clear_dwords)(cmd_buffer, surface_state, image, level,
-                                   false /* copy to ss */);
+      if (GEN_GEN >= 10) {
+         add_clear_relocs(cmd_buffer, image, level, surface_state);
+      } else {
+         genX(copy_fast_clear_dwords)(cmd_buffer, surface_state, image, level,
+                                      false /* copy to ss */);
+      }
       anv_ccs_resolve(cmd_buffer, surface_state, image, level, layer_count,
                       image->aux_usage == ISL_AUX_USAGE_CCS_E ?
                       BLORP_FAST_CLEAR_OP_RESOLVE_PARTIAL :
