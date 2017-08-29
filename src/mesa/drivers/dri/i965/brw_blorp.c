@@ -744,6 +744,22 @@ set_write_disables(const struct intel_renderbuffer *irb,
 }
 
 static void
+update_fast_clear_color(struct brw_context *brw,
+                        const struct blorp_surf *surf,
+                        const union isl_color_value clear_color)
+{
+   assert(surf);
+   /* Clear values are stored at the same bo as the aux surface, right
+    * after the surface.
+    */
+   uint32_t clear_offset = surf->aux_addr.offset + surf->aux_surf->size;
+   for (int i = 0; i < brw->isl_dev.ss.clear_value_size; i++) {
+      brw_store_data_imm32(brw, surf->aux_addr.buffer,
+                           clear_offset + i * 4, clear_color.u32[i]);
+   }
+}
+
+static void
 do_single_blorp_clear(struct brw_context *brw, struct gl_framebuffer *fb,
                       struct gl_renderbuffer *rb, unsigned buf,
                       bool partial_clear, bool encode_srgb)
@@ -844,6 +860,10 @@ do_single_blorp_clear(struct brw_context *brw, struct gl_framebuffer *fb,
       struct blorp_surf surf;
       blorp_surf_for_miptree(brw, &surf, irb->mt, irb->mt->aux_usage, true,
                              &level, irb->mt_layer, num_layers, isl_tmp);
+
+      /* update clear color */
+      if (brw->gen >= 10 && !same_clear_color)
+         update_fast_clear_color(brw, &surf, clear_color);
 
       /* Ivybrigde PRM Vol 2, Part 1, "11.7 MCS Buffer for Render Target(s)":
        *
