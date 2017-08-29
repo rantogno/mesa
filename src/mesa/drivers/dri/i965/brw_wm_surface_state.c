@@ -131,6 +131,7 @@ brw_emit_surface_state(struct brw_context *brw,
                        uint32_t mocs, uint32_t *surf_offset, int surf_index,
                        unsigned reloc_flags)
 {
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    uint32_t tile_x = mt->level[0].level_x;
    uint32_t tile_y = mt->level[0].level_y;
    uint32_t offset = mt->offset;
@@ -175,6 +176,10 @@ brw_emit_surface_state(struct brw_context *brw,
                                  brw->isl_dev.ss.align,
                                  surf_offset);
 
+   bool use_clear_address = devinfo->gen >= 10 && aux_surf;
+   uint32_t clear_offset =
+      use_clear_address ? aux_offset + aux_surf->size : 0;
+
    isl_surf_fill_state(&brw->isl_dev, state, .surf = &mt->surf, .view = &view,
                        .address = brw_emit_reloc(&brw->batch,
                                                  *surf_offset + brw->isl_dev.ss.addr_offset,
@@ -182,6 +187,8 @@ brw_emit_surface_state(struct brw_context *brw,
                        .aux_surf = aux_surf, .aux_usage = aux_usage,
                        .aux_address = aux_offset,
                        .mocs = mocs, .clear_color = clear_color,
+                       .use_clear_address = use_clear_address,
+                       .clear_address = clear_offset,
                        .x_offset_sa = tile_x, .y_offset_sa = tile_y);
    if (aux_surf) {
       /* On gen7 and prior, the upper 20 bits of surface state DWORD 6 are the
@@ -199,6 +206,16 @@ brw_emit_surface_state(struct brw_context *brw,
                                  brw->isl_dev.ss.aux_addr_offset,
                                  aux_bo, *aux_addr,
                                  reloc_flags);
+   }
+
+   if (use_clear_address) {
+      /* Make sure the offset is aligned with a cacheline. */
+      assert((clear_offset & 0x3f) == 0);
+      uint32_t *clear_address = state + brw->isl_dev.ss.clear_value_offset;
+      *clear_address = brw_emit_reloc(&brw->batch,
+                                      *surf_offset +
+                                      brw->isl_dev.ss.clear_value_offset,
+                                      aux_bo, *clear_address, reloc_flags);
    }
 }
 
