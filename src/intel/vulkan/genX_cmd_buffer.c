@@ -421,8 +421,11 @@ get_fast_clear_state_offset(const struct anv_device *device,
    assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
    assert(level < anv_image_aux_levels(image));
    uint32_t offset = image->offset + image->aux_surface.offset +
-                     image->aux_surface.isl.size +
-                     anv_fast_clear_state_entry_size(device) * level;
+                     image->aux_surface.isl.size;
+
+   offset = ALIGN(offset, 64);
+
+   offset += anv_fast_clear_state_entry_size(device) * level;
 
    switch (field) {
    case FAST_CLEAR_STATE_FIELD_NEEDS_RESOLVE:

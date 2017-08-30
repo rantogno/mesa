@@ -184,6 +184,8 @@ add_fast_clear_state_buffer(struct anv_image *image,
    assert(image->size ==
           image->aux_surface.offset + image->aux_surface.isl.size);
 
+   image->size = ALIGN(image->size, 64);
+
    const unsigned entry_size = anv_fast_clear_state_entry_size(device);
    /* There's no padding between entries, so ensure that they're always a
     * multiple of 32 bits in order to enable GPU memcpy operations.

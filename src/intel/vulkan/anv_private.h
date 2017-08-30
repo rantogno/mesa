@@ -2169,7 +2169,7 @@ anv_fast_clear_state_entry_size(const struct anv_device *device)
     * GPU memcpy operations.
     */
    assert(device->isl_dev.ss.clear_value_size % 4 == 0);
-   return device->isl_dev.ss.clear_value_size + 4;
+   return ALIGN(device->isl_dev.ss.clear_value_size + 4, 64);
 }
 
 /* Returns true if a HiZ-enabled depth buffer can be sampled from. */
