@@ -88,7 +88,7 @@ static const uint32_t isl_to_gen_multisample_layout[] = {
 static const uint32_t isl_to_gen_aux_mode[] = {
    [ISL_AUX_USAGE_NONE] = AUX_NONE,
    [ISL_AUX_USAGE_HIZ] = AUX_HIZ,
-   [ISL_AUX_USAGE_MCS] = AUX_CCS_D,
+   [ISL_AUX_USAGE_MCS] = AUX_CCS_E,
    [ISL_AUX_USAGE_CCS_D] = AUX_CCS_D,
    [ISL_AUX_USAGE_CCS_E] = AUX_CCS_E,
 };
