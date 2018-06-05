@@ -3154,13 +3154,124 @@ UNUSED static const uint32_t push_constant_opcodes[] = {
    [MESA_SHADER_COMPUTE]                     = 0,
 };
 
+struct push_bos {
+   int n;
+   struct {
+      struct brw_address addr;
+      uint32_t length;
+   } buffers[4];
+};
+
+UNUSED static void
+setup_constant_buffers(struct brw_context *brw,
+                       struct brw_stage_state *stage_state,
+                       gl_shader_stage stage,
+                       struct push_bos *push_bos)
+{
+   struct gl_context *ctx = &brw->ctx;
+   struct gl_program *prog = ctx->_Shader->CurrentProgram[stage];
+
+   if (!stage_state->prog_data)
+      return;
+
+   assert(push_bos && push_bos->n == 0);
+
+   int n = 0;
+   if (stage_state->push_const_size > 0) {
+      push_bos->buffers[n].length = stage_state->push_const_size;
+      push_bos->buffers[n].addr =
+         ro_bo(stage_state->push_const_bo,
+               stage_state->push_const_offset);
+      n++;
+   }
+
+   if (GEN_GEN >= 8 || GEN_IS_HASWELL) {
+      for (int i = 0; i <= 3; i++) {
+         assert(n <= 3);
+
+         const struct brw_ubo_range *range =
+            &stage_state->prog_data->ubo_ranges[i];
+
+         if (range->length == 0)
+            continue;
+
+         const struct gl_uniform_block *block =
+            prog->sh.UniformBlocks[range->block];
+         const struct gl_buffer_binding *binding =
+            &ctx->UniformBufferBindings[block->Binding];
+
+         if (binding->BufferObject == ctx->Shared->NullBufferObj) {
+            static unsigned msg_id = 0;
+            _mesa_gl_debug(ctx, &msg_id, MESA_DEBUG_SOURCE_API,
+                           MESA_DEBUG_TYPE_UNDEFINED,
+                           MESA_DEBUG_SEVERITY_HIGH,
+                           "UBO %d unbound, %s shader uniform data "
+                           "will be undefined.",
+                           range->block,
+                           _mesa_shader_stage_to_string(stage));
+            continue;
+         }
+
+         assert(binding->Offset % 32 == 0);
+
+         struct brw_bo *bo = intel_bufferobj_buffer(
+            brw, intel_buffer_object(binding->BufferObject),
+            binding->Offset, range->length * 32, false);
+
+         /* printf(">>> UBO %p goes to buffer: %d\n", bo, n); */
+         push_bos->buffers[n].length = range->length;
+         push_bos->buffers[n].addr =
+            ro_bo(bo, range->start * 32 + binding->Offset);
+         n++;
+      }
+   }
+
+   push_bos->n = n;
+}
+
+UNUSED static void
+emit_push_constant_packet(struct brw_context *brw,
+                          struct brw_stage_state *stage_state,
+                          gl_shader_stage stage,
+                          const struct push_bos *push_bos)
+{
+   UNUSED uint32_t mocs = GEN_GEN < 8 ? GEN7_MOCS_L3 : 0;
+
+   brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_VS), pkt) {
+      pkt._3DCommandSubOpcode = push_constant_opcodes[stage];
+      if (stage_state->prog_data) {
+#if GEN_GEN >= 8 || GEN_IS_HASWELL
+         /* The Skylake PRM contains the following restriction:
+          *
+          *    "The driver must ensure The following case does not occur
+          *     without a flush to the 3D engine: 3DSTATE_CONSTANT_* with
+          *     buffer 3 read length equal to zero committed followed by a
+          *     3DSTATE_CONSTANT_* with buffer 0 read length not equal to
+          *     zero committed."
+          *
+          * To avoid this, we program the buffers in the highest slots.
+          * This way, slot 0 is only used if slot 3 is also used.
+          */
+         int n = push_bos->n;
+         for (int i = 3, j = n - 1; j >= 0; i--, j--) {
+            /* printf(">>> assigning address: %p from buffer %d to packet %d\n", */
+            /*        push_bos->buffers[i].addr.bo, i, j); */
+            pkt.ConstantBody.ReadLength[i] = push_bos->buffers[j].length;
+            pkt.ConstantBody.Buffer[i] = push_bos->buffers[j].addr;
+         }
+#else
+         pkt.ConstantBody.ReadLength[0] = push_bos->buffers[0].length;
+         pkt.ConstantBody.Buffer[0].offset =
+            push_bos->buffers[0].addr.offset | mocs;
+#endif
+      }
+   }
+}
+
 static void
 genX(upload_push_constant_packets)(struct brw_context *brw)
 {
    const struct gen_device_info *devinfo = &brw->screen->devinfo;
-   struct gl_context *ctx = &brw->ctx;
-
-   UNUSED uint32_t mocs = GEN_GEN < 8 ? GEN7_MOCS_L3 : 0;
 
    struct brw_stage_state *stage_states[] = {
       &brw->vs.base,
@@ -3176,78 +3287,14 @@ genX(upload_push_constant_packets)(struct brw_context *brw)
 
    for (int stage = 0; stage <= MESA_SHADER_FRAGMENT; stage++) {
       struct brw_stage_state *stage_state = stage_states[stage];
-      UNUSED struct gl_program *prog = ctx->_Shader->CurrentProgram[stage];
 
       if (!stage_state->push_constants_dirty)
          continue;
 
-      brw_batch_emit(brw, GENX(3DSTATE_CONSTANT_VS), pkt) {
-         pkt._3DCommandSubOpcode = push_constant_opcodes[stage];
-         if (stage_state->prog_data) {
-#if GEN_GEN >= 8 || GEN_IS_HASWELL
-            /* The Skylake PRM contains the following restriction:
-             *
-             *    "The driver must ensure The following case does not occur
-             *     without a flush to the 3D engine: 3DSTATE_CONSTANT_* with
-             *     buffer 3 read length equal to zero committed followed by a
-             *     3DSTATE_CONSTANT_* with buffer 0 read length not equal to
-             *     zero committed."
-             *
-             * To avoid this, we program the buffers in the highest slots.
-             * This way, slot 0 is only used if slot 3 is also used.
-             */
-            int n = 3;
+      struct push_bos push_bos = { .n = 0 };
+      setup_constant_buffers(brw, stage_state, stage, &push_bos);
 
-            for (int i = 3; i >= 0; i--) {
-               const struct brw_ubo_range *range =
-                  &stage_state->prog_data->ubo_ranges[i];
-
-               if (range->length == 0)
-                  continue;
-
-               const struct gl_uniform_block *block =
-                  prog->sh.UniformBlocks[range->block];
-               const struct gl_buffer_binding *binding =
-                  &ctx->UniformBufferBindings[block->Binding];
-
-               if (binding->BufferObject == ctx->Shared->NullBufferObj) {
-                  static unsigned msg_id = 0;
-                  _mesa_gl_debug(ctx, &msg_id, MESA_DEBUG_SOURCE_API,
-                                 MESA_DEBUG_TYPE_UNDEFINED,
-                                 MESA_DEBUG_SEVERITY_HIGH,
-                                 "UBO %d unbound, %s shader uniform data "
-                                 "will be undefined.",
-                                 range->block,
-                                 _mesa_shader_stage_to_string(stage));
-                  continue;
-               }
-
-               assert(binding->Offset % 32 == 0);
-
-               struct brw_bo *bo = intel_bufferobj_buffer(brw,
-                  intel_buffer_object(binding->BufferObject),
-                  binding->Offset, range->length * 32, false);
-
-               pkt.ConstantBody.ReadLength[n] = range->length;
-               pkt.ConstantBody.Buffer[n] =
-                  ro_bo(bo, range->start * 32 + binding->Offset);
-               n--;
-            }
-
-            if (stage_state->push_const_size > 0) {
-               assert(n >= 0);
-               pkt.ConstantBody.ReadLength[n] = stage_state->push_const_size;
-               pkt.ConstantBody.Buffer[n] =
-                  ro_bo(stage_state->push_const_bo,
-                        stage_state->push_const_offset);
-            }
-#else
-            pkt.ConstantBody.ReadLength[0] = stage_state->push_const_size;
-            pkt.ConstantBody.Buffer[0].offset =
-               stage_state->push_const_offset | mocs;
-#endif
-         }
-      }
+      emit_push_constant_packet(brw, stage_state, stage, &push_bos);
 
       stage_state->push_constants_dirty = false;
       brw->ctx.NewDriverState |= GEN_GEN >= 9 ? BRW_NEW_SURFACES : 0;
