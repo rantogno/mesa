@@ -2322,13 +2322,151 @@ cmd_buffer_emit_descriptor_pointers(struct anv_cmd_buffer *cmd_buffer,
    }
 }
 
-static void
-cmd_buffer_flush_push_constants(struct anv_cmd_buffer *cmd_buffer,
-                                VkShaderStageFlags dirty_stages)
+struct push_bos {
+   int n;
+   struct {
+      struct anv_address addr;
+      uint32_t length;
+   } buffers[4];
+};
+
+UNUSED static void
+setup_constant_buffers(struct anv_cmd_buffer *cmd_buffer,
+                       gl_shader_stage stage,
+                       struct push_bos *push_bos)
 {
    const struct anv_cmd_graphics_state *gfx_state = &cmd_buffer->state.gfx;
    const struct anv_pipeline *pipeline = gfx_state->base.pipeline;
 
+   if (!anv_pipeline_has_stage(pipeline, stage))
+      return;
+
+   assert(push_bos && push_bos->n == 0);
+
+   const struct brw_stage_prog_data *prog_data =
+      pipeline->shaders[stage]->prog_data;
+   const struct anv_pipeline_bind_map *bind_map =
+      &pipeline->shaders[stage]->bind_map;
+
+   int n = 0;
+
+   struct anv_state state =
+      anv_cmd_buffer_push_constants(cmd_buffer, stage);
+
+   if (state.alloc_size > 0) {
+      push_bos->buffers[n].addr.offset = state.offset;
+      push_bos->buffers[n].addr.bo = GEN_GEN >= 8 || GEN_IS_HASWELL ?
+         &cmd_buffer->device->dynamic_state_pool.block_pool.bo : NULL;
+      push_bos->buffers[n].length = DIV_ROUND_UP(state.alloc_size, 32);
+      n++;
+   }
+
+   if (GEN_GEN >= 8 || GEN_IS_HASWELL) {
+      for (int i = 0; i <= 3; i++) {
+         assert(n <= 3);
+
+         const struct brw_ubo_range *range = &prog_data->ubo_ranges[i];
+         if (range->length == 0)
+            continue;
+
+         const unsigned surface =
+            prog_data->binding_table.ubo_start + range->block;
+         assert(surface <= bind_map->surface_count);
+         const struct anv_pipeline_binding *binding =
+            &bind_map->surface_to_descriptor[surface];
+
+         const struct anv_descriptor *desc =
+            anv_descriptor_for_binding(&gfx_state->base, binding);
+
+         struct anv_address read_addr;
+         uint32_t read_len;
+
+         if (desc->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            read_len = MIN2(range->length,
+               DIV_ROUND_UP(desc->buffer_view->range, 32) - range->start);
+            read_addr = anv_address_add(desc->buffer_view->address,
+                                        range->start * 32);
+         } else {
+            assert(desc->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+
+            uint32_t dynamic_offset =
+               dynamic_offset_for_binding(&gfx_state->base, binding);
+            uint32_t buf_offset =
+               MIN2(desc->offset + dynamic_offset, desc->buffer->size);
+            uint32_t buf_range =
+               MIN2(desc->range, desc->buffer->size - buf_offset);
+
+            read_len = MIN2(range->length,
+                            DIV_ROUND_UP(buf_range, 32) - range->start);
+            read_addr = anv_address_add(desc->buffer->address,
+                                        buf_offset + range->start * 32);
+         }
+
+         if (read_len > 0) {
+            push_bos->buffers[n].addr = read_addr;
+            push_bos->buffers[n].length = read_len;
+            n++;
+         }
+      }
+   }
+
+   push_bos->n = n;
+}
+
+UNUSED static void
+emit_push_constant_packet(struct anv_cmd_buffer *cmd_buffer,
+                          gl_shader_stage stage,
+                          const struct push_bos *push_bos)
+{
+   const struct anv_cmd_graphics_state *gfx_state = &cmd_buffer->state.gfx;
+   const struct anv_pipeline *pipeline = gfx_state->base.pipeline;
+   static const uint32_t push_constant_opcodes[] = {
+      [MESA_SHADER_VERTEX]                      = 21,
+      [MESA_SHADER_TESS_CTRL]                   = 25, /* HS */
+      [MESA_SHADER_TESS_EVAL]                   = 26, /* DS */
+      [MESA_SHADER_GEOMETRY]                    = 22,
+      [MESA_SHADER_FRAGMENT]                    = 23,
+      [MESA_SHADER_COMPUTE]                     = 0,
+   };
+
+   anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_CONSTANT_VS), c) {
+      c._3DCommandSubOpcode = push_constant_opcodes[stage];
+      if (anv_pipeline_has_stage(pipeline, stage)) {
+#if GEN_GEN >= 8 || GEN_IS_HASWELL
+         /* The Skylake PRM contains the following restriction:
+          *
+          *    "The driver must ensure The following case does not occur
+          *     without a flush to the 3D engine: 3DSTATE_CONSTANT_* with
+          *     buffer 3 read length equal to zero committed followed by a
+          *     3DSTATE_CONSTANT_* with buffer 0 read length not equal to
+          *     zero committed."
+          *
+          * To avoid this, we program the buffers in the highest slots.
+          * This way, slot 0 is only used if slot 3 is also used.
+          */
+         int n = push_bos->n;
+         for (int i = 3, j = n - 1; j >= 0; i--, j--) {
+            c.ConstantBody.ReadLength[i] = push_bos->buffers[j].length;
+            c.ConstantBody.Buffer[i] = push_bos->buffers[j].addr;
+         }
+#else
+         /* For Ivy Bridge, the push constants packets have a different
+          * rule that would require us to iterate in the other direction
+          * and possibly mess around with dynamic state base address.
+          * Don't bother; just emit regular push constants at n = 0.
+          */
+         c.ConstantBody.ReadLength[0] = push_bos->buffers[0].length;
+         c.ConstantBody.Buffer[0].offset = push_bos->buffers[0].addr.offset;
+#endif
+      }
+   }
+}
+
+
+static void
+cmd_buffer_flush_push_constants(struct anv_cmd_buffer *cmd_buffer,
+                                VkShaderStageFlags dirty_stages)
+{
    static const uint32_t push_constant_opcodes[] = {
       [MESA_SHADER_VERTEX]                      = 21,
       [MESA_SHADER_TESS_CTRL]                   = 25, /* HS */
@@ -2344,102 +2482,10 @@ cmd_buffer_flush_push_constants(struct anv_cmd_buffer *cmd_buffer,
       assert(stage < ARRAY_SIZE(push_constant_opcodes));
       assert(push_constant_opcodes[stage] > 0);
 
-      anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_CONSTANT_VS), c) {
-         c._3DCommandSubOpcode = push_constant_opcodes[stage];
+      struct push_bos push_bos = { .n = 0 };
+      setup_constant_buffers(cmd_buffer, stage, &push_bos);
 
-         if (anv_pipeline_has_stage(pipeline, stage)) {
-#if GEN_GEN >= 8 || GEN_IS_HASWELL
-            const struct brw_stage_prog_data *prog_data =
-               pipeline->shaders[stage]->prog_data;
-            const struct anv_pipeline_bind_map *bind_map =
-               &pipeline->shaders[stage]->bind_map;
-
-            /* The Skylake PRM contains the following restriction:
-             *
-             *    "The driver must ensure The following case does not occur
-             *     without a flush to the 3D engine: 3DSTATE_CONSTANT_* with
-             *     buffer 3 read length equal to zero committed followed by a
-             *     3DSTATE_CONSTANT_* with buffer 0 read length not equal to
-             *     zero committed."
-             *
-             * To avoid this, we program the buffers in the highest slots.
-             * This way, slot 0 is only used if slot 3 is also used.
-             */
-            int n = 3;
-
-            for (int i = 3; i >= 0; i--) {
-               const struct brw_ubo_range *range = &prog_data->ubo_ranges[i];
-               if (range->length == 0)
-                  continue;
-
-               const unsigned surface =
-                  prog_data->binding_table.ubo_start + range->block;
-
-               assert(surface <= bind_map->surface_count);
-               const struct anv_pipeline_binding *binding =
-                  &bind_map->surface_to_descriptor[surface];
-
-               const struct anv_descriptor *desc =
-                  anv_descriptor_for_binding(&gfx_state->base, binding);
-
-               struct anv_address read_addr;
-               uint32_t read_len;
-               if (desc->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-                  read_len = MIN2(range->length,
-                     DIV_ROUND_UP(desc->buffer_view->range, 32) - range->start);
-                  read_addr = anv_address_add(desc->buffer_view->address,
-                                              range->start * 32);
-               } else {
-                  assert(desc->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
-
-                  uint32_t dynamic_offset =
-                     dynamic_offset_for_binding(&gfx_state->base, binding);
-                  uint32_t buf_offset =
-                     MIN2(desc->offset + dynamic_offset, desc->buffer->size);
-                  uint32_t buf_range =
-                     MIN2(desc->range, desc->buffer->size - buf_offset);
-
-                  read_len = MIN2(range->length,
-                     DIV_ROUND_UP(buf_range, 32) - range->start);
-                  read_addr = anv_address_add(desc->buffer->address,
-                                              buf_offset + range->start * 32);
-               }
-
-               if (read_len > 0) {
-                  c.ConstantBody.Buffer[n] = read_addr;
-                  c.ConstantBody.ReadLength[n] = read_len;
-                  n--;
-               }
-            }
-
-            struct anv_state state =
-               anv_cmd_buffer_push_constants(cmd_buffer, stage);
-
-            if (state.alloc_size > 0) {
-               c.ConstantBody.Buffer[n] = (struct anv_address) {
-                  .bo = &cmd_buffer->device->dynamic_state_pool.block_pool.bo,
-                  .offset = state.offset,
-               };
-               c.ConstantBody.ReadLength[n] =
-                  DIV_ROUND_UP(state.alloc_size, 32);
-            }
-#else
-            /* For Ivy Bridge, the push constants packets have a different
-             * rule that would require us to iterate in the other direction
-             * and possibly mess around with dynamic state base address.
-             * Don't bother; just emit regular push constants at n = 0.
-             */
-            struct anv_state state =
-               anv_cmd_buffer_push_constants(cmd_buffer, stage);
-
-            if (state.alloc_size > 0) {
-               c.ConstantBody.Buffer[0].offset = state.offset,
-               c.ConstantBody.ReadLength[0] =
-                  DIV_ROUND_UP(state.alloc_size, 32);
-            }
-#endif
-         }
-      }
+      emit_push_constant_packet(cmd_buffer, stage, &push_bos);
 
       flushed |= mesa_to_vk_shader_stage(stage);
    }
